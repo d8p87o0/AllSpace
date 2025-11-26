@@ -81,6 +81,7 @@
   display: flex;
   align-items: center;
   gap: 8px;
+  cursor: pointer; /* добавь это */
 }
 
 .logo__image {
@@ -1293,3 +1294,579 @@
 }
 
 
+/* ---------- Place detail page ---------- */
+
+.place-page {
+  background-color: #f5f5f7;
+  padding: calc(var(--header-height) + 32px) 0 56px;
+}
+
+.place-page__inner {
+  max-width: 1200px;
+  margin: 0 auto;
+  padding: 0 16px;
+}
+
+.place-page__layout {
+  display: grid;
+  grid-template-columns: minmax(0, 2.2fr) minmax(0, 1fr);
+  gap: 24px;
+  align-items: flex-start;
+}
+
+/* Галерея */
+
+.place-page__gallery {
+  margin-bottom: 24px;
+}
+
+.place-page__gallery-main {
+  border-radius: 24px;
+  overflow: hidden;
+  background-color: #000;
+}
+
+.place-page__gallery-main-img {
+  width: 100%;
+  height: 320px;
+  object-fit: cover;
+  display: block;
+}
+
+.place-page__gallery-thumbs {
+  margin-top: 12px;
+  display: flex;
+  gap: 8px;
+  overflow-x: auto;
+}
+
+.place-page__thumb-btn {
+  border: none;
+  padding: 0;
+  border-radius: 12px;
+  overflow: hidden;
+  background-color: transparent;
+  flex: 0 0 80px;
+  cursor: pointer;
+  opacity: 0.7;
+}
+
+.place-page__thumb-btn--active {
+  opacity: 1;
+  box-shadow: 0 0 0 2px #22c55e;
+}
+
+.place-page__thumb-img {
+  width: 100%;
+  height: 60px;
+  object-fit: cover;
+  display: block;
+}
+
+/* Заголовок */
+
+.place-page__header {
+  margin-bottom: 32px;
+}
+
+.place-page__chips-row {
+  margin-bottom: 8px;
+}
+
+.place-page__chip {
+  display: inline-flex;
+  align-items: center;
+  padding: 4px 10px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 600;
+  background-color: #e5f6ec;
+  color: #15803d;
+}
+
+.place-page__title {
+  margin: 0 0 8px;
+  font-size: 28px;
+  font-weight: 800;
+  color: #111827;
+}
+
+.place-page__meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 12px;
+  font-size: 14px;
+  color: #6b7280;
+}
+
+.place-page__rating-main {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-weight: 600;
+  color: #111827;
+}
+
+.place-page__rating-star {
+  color: #22c55e;
+  font-size: 16px;
+}
+
+.place-page__rating-count {
+  color: #9ca3af;
+}
+
+.place-page__dot {
+  color: #d1d5db;
+}
+
+.place-page__address {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.place-page__description {
+  margin: 12px 0 0;
+  font-size: 14px;
+  line-height: 1.6;
+  color: #4b5563;
+}
+
+.register-consent {
+  margin-top: 4px;
+  margin-bottom: 12px;
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  font-size: 13px;
+  color: #4b5563;
+  text-align: left;
+}
+
+.register-consent input[type="checkbox"] {
+  margin-top: 3px;
+}
+
+/* Общие секции */
+
+.place-page__section {
+  margin-bottom: 32px;
+}
+
+.place-page__section-title {
+  margin: 0 0 16px;
+  font-size: 20px;
+  font-weight: 700;
+  color: #111827;
+}
+
+.place-page__section-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+/* Особенности */
+
+.place-page__features-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px 24px;
+}
+
+.place-feature {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+}
+
+.place-feature__icon {
+  width: 32px;
+  height: 32px;
+  border-radius: 999px;
+  background-color: #e5f6ec;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 18px;
+}
+
+.place-feature__label {
+  font-size: 14px;
+  font-weight: 600;
+  color: #111827;
+}
+
+.place-feature__text {
+  font-size: 13px;
+  color: #6b7280;
+}
+
+/* Отзывы */
+
+.place-page__reviews-btn {
+  border: none;
+  border-radius: 999px;
+  padding: 8px 18px;
+  font-size: 14px;
+  font-weight: 600;
+  background-color: #22c55e;
+  color: #ffffff;
+  cursor: pointer;
+  box-shadow: 0 6px 16px rgba(34, 197, 94, 0.4);
+  transition: background-color 0.15s ease, transform 0.1s ease,
+    box-shadow 0.15s ease;
+}
+
+.place-page__reviews-btn:hover {
+  background-color: #16a34a;
+  transform: translateY(-1px);
+  box-shadow: 0 10px 24px rgba(34, 197, 94, 0.5);
+}
+
+.place-page__reviews-btn:active {
+  transform: translateY(0);
+  box-shadow: 0 4px 12px rgba(34, 197, 94, 0.4);
+}
+
+.place-page__reviews-list {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.review-card {
+  background-color: #ffffff;
+  border-radius: 20px;
+  padding: 16px 18px;
+  box-shadow: 0 4px 16px rgba(15, 23, 42, 0.06);
+}
+
+.review-card__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 8px;
+}
+
+.review-card__user {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.review-card__avatar {
+  width: 32px;
+  height: 32px;
+  border-radius: 999px;
+  background-color: #e5f6ec;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 13px;
+  font-weight: 700;
+  color: #15803d;
+}
+
+.review-card__name {
+  font-size: 14px;
+  font-weight: 600;
+  color: #111827;
+}
+
+.review-card__role {
+  font-size: 12px;
+  color: #9ca3af;
+}
+
+.review-card__meta {
+  text-align: right;
+  font-size: 12px;
+}
+
+.review-card__stars {
+  color: #22c55e;
+  margin-bottom: 2px;
+}
+
+.review-card__date {
+  color: #9ca3af;
+}
+
+.review-card__text {
+  margin: 8px 0 10px;
+  font-size: 14px;
+  line-height: 1.5;
+  color: #4b5563;
+}
+
+.review-card__more-btn {
+  border: none;
+  background: transparent;
+  padding: 0;
+  font-size: 13px;
+  color: #15803d;
+  text-decoration: underline;
+  cursor: pointer;
+}
+
+/* Правая колонка */
+
+.place-page__sidebar {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.place-sidecard {
+  background-color: #ffffff;
+  border-radius: 20px;
+  padding: 16px 18px;
+  box-shadow: 0 4px 16px rgba(15, 23, 42, 0.06);
+}
+
+.place-sidecard__title {
+  margin: 0 0 12px;
+  font-size: 16px;
+  font-weight: 700;
+  color: #111827;
+}
+
+.place-sidecard__rows {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  font-size: 14px;
+  color: #4b5563;
+}
+
+.place-sidecard__row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.place-sidecard__address {
+  font-size: 14px;
+  color: #4b5563;
+  margin: 0 0 12px;
+}
+
+.place-sidecard__map {
+  border-radius: 16px;
+  overflow: hidden;
+  background-color: #e5e7eb;
+  margin-bottom: 12px;
+}
+
+.place-sidecard__map-img {
+  width: 100%;
+  display: block;
+}
+
+.place-sidecard__route-btn {
+  width: 100%;
+  border: none;
+  border-radius: 999px;
+  padding: 10px 18px;
+  font-size: 14px;
+  font-weight: 600;
+  background-color: #22c55e;
+  color: #ffffff;
+  cursor: pointer;
+  box-shadow: 0 8px 20px rgba(34, 197, 94, 0.45);
+  transition: background-color 0.15s ease, transform 0.1s ease,
+    box-shadow 0.15s ease;
+}
+
+.place-sidecard__route-btn:hover {
+  background-color: #16a34a;
+  transform: translateY(-1px);
+  box-shadow: 0 12px 30px rgba(34, 197, 94, 0.5);
+}
+
+.place-sidecard__route-btn:active {
+  transform: translateY(0);
+  box-shadow: 0 6px 16px rgba(34, 197, 94, 0.45);
+}
+
+.place-sidecard__map-iframe {
+  width: 100%;
+  height: 220px;
+  border: 0;
+  display: block;
+}
+
+.place-sidecard__map-placeholder {
+  width: 100%;
+  height: 220px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 13px;
+  color: #6b7280;
+  background-color: #e5e7eb;
+}
+
+/* Кнопка "Добавить в избранное" */
+
+.place-sidecard__fav-btn {
+  width: 100%;
+  margin-top: 8px;
+  border: 1px solid #d1d5db;
+  border-radius: 999px;
+  padding: 9px 18px;
+  font-size: 14px;
+  font-weight: 600;
+  background-color: #ffffff;
+  color: #111827;
+  cursor: pointer;
+  transition: background-color 0.15s ease, color 0.15s ease,
+    box-shadow 0.15s ease, transform 0.1s ease, border-color 0.15s ease;
+}
+
+.place-sidecard__fav-btn:hover {
+  background-color: #f3f4f6;
+  box-shadow: 0 4px 12px rgba(15, 23, 42, 0.08);
+  transform: translateY(-1px);
+}
+
+.place-sidecard__fav-btn:active {
+  transform: translateY(0);
+  box-shadow: 0 2px 8px rgba(15, 23, 42, 0.1);
+}
+
+.place-sidecard__fav-btn--active {
+  background-color: #fee2e2;
+  border-color: #f97373;
+  color: #b91c1c;
+  box-shadow: 0 6px 18px rgba(248, 113, 113, 0.45);
+}
+
+/* Адаптив страницы места */
+
+@media (max-width: 1024px) {
+  .place-page__layout {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .place-page__sidebar {
+    flex-direction: row;
+    flex-wrap: wrap;
+  }
+
+  .place-sidecard {
+    flex: 1 1 260px;
+  }
+
+  .place-page__gallery-main-img {
+    height: 260px;
+  }
+}
+
+@media (max-width: 768px) {
+  .place-page {
+    padding: calc(var(--header-height) + 24px) 0 40px;
+  }
+
+  .place-page__title {
+    font-size: 22px;
+  }
+
+  .place-page__features-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .place-page__section-header {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
+  .place-page__gallery-main-img {
+    height: 220px;
+  }
+
+  /* ---------- Lightbox для галереи ---------- */
+
+.place-lightbox {
+  position: fixed;
+  inset: 0;
+  background-color: rgba(15, 23, 42, 0.75);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 50;
+}
+
+.place-lightbox__content {
+  position: relative;
+  max-width: 90vw;
+  max-height: 90vh;
+  background-color: #000;
+  border-radius: 16px;
+  padding: 16px 16px 44px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+
+.place-lightbox__img {
+  max-width: 100%;
+  max-height: 70vh;
+  object-fit: contain;
+  border-radius: 12px;
+}
+
+.place-lightbox__close {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  border: none;
+  width: 32px;
+  height: 32px;
+  border-radius: 999px;
+  background-color: rgba(15, 23, 42, 0.75);
+  color: #f9fafb;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  font-size: 18px;
+}
+
+.place-lightbox__controls {
+  position: absolute;
+  bottom: 10px;
+  left: 0;
+  right: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 16px;
+  color: #e5e7eb;
+  font-size: 14px;
+}
+
+.place-lightbox__controls button {
+  border: none;
+  border-radius: 999px;
+  padding: 6px 12px;
+  background-color: rgba(31, 41, 55, 0.8);
+  color: #f9fafb;
+  cursor: pointer;
+}
+
+.place-lightbox__controls button:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.place-lightbox__counter {
+  min-width: 60px;
+  text-align: center;
+}
+}

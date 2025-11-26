@@ -1,15 +1,16 @@
 [
     {
       "id": 1,
-      "name": "Coffee Lab",
-      "type": "Кафе",
-      "city": "Санкт-Петербург",
-      "address": "Невский проспект, 28",
-      "image": "/space1.png",
+      "name": "Help For You",
+      "type": "Коворкинг",
+      "city": "Москва",
+      "address": "Мясницкая улица, 30/1",
+      "image": "/p1p1.png",
       "rating": 4.8,
       "reviews": 124,
       "badge": "PP",
-      "features": ["Wi-Fi", "Розетки"]
+      "features": ["Wi-Fi", "Розетки"],
+      "link": "https://yandex.ru/maps/-/CLWaIXlp"
     },
     {
       "id": 2,
