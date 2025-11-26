@@ -51,24 +51,8 @@ function App() {
   const navigate = useNavigate();
 
   const catalogRef = useRef(null);
-
-  const scrollToCatalog = () => {
-    if (!catalogRef.current) return;
-
-    const headerOffset = 80; // подстрой под высоту шапки
-    const rect = catalogRef.current.getBoundingClientRect();
-    const absoluteTop = rect.top + window.scrollY;
-    const targetTop = absoluteTop - headerOffset;
-
-    window.scrollTo({
-      top: targetTop,
-      behavior: "smooth",
-    });
-  };
-  
-
-  
-  const isFirstPageRender = useRef(true);
+  // скроллить ли к каталогу после смены страницы
+  const shouldScrollAfterPageChange = useRef(false);
 
   const totalPages = Math.max(
     1,
@@ -84,24 +68,44 @@ function App() {
   const startIndex = (safeCurrentPage - 1) * PAGE_SIZE;
   const visiblePlaces = placesData.slice(startIndex, startIndex + PAGE_SIZE);
 
+  useEffect(() => {
+    // скроллим только если перед этим пользователь нажал кнопку пагинации
+    if (!shouldScrollAfterPageChange.current) return;
+
+    shouldScrollAfterPageChange.current = false;
+    if (!catalogRef.current) return;
+
+    const headerOffset = 80; // можно подстроить под высоту шапки
+    const rect = catalogRef.current.getBoundingClientRect();
+    const absoluteTop = rect.top + window.scrollY;
+    const targetTop = absoluteTop - headerOffset;
+
+    window.scrollTo({
+      top: targetTop,
+      behavior: "smooth",
+    });
+  }, [safeCurrentPage]);
 
   const handlePageClick = (page) => {
+    shouldScrollAfterPageChange.current = true;
     setCurrentPage(page);
-    // скроллим к каталогу только при клике по цифрам
-    scrollToCatalog();
   };
 
   const handlePrev = () => {
-    setCurrentPage((prev) => Math.max(1, prev - 1));
-    // по твоему ТЗ можно НЕ скроллить на "Назад" — оставляем без scrollToCatalog
+    setCurrentPage((prev) => {
+      const next = Math.max(1, prev - 1);
+      if (next !== prev) {
+        shouldScrollAfterPageChange.current = true;
+      }
+      return next;
+    });
   };
 
   const handleNext = () => {
     setCurrentPage((prev) => {
       const next = Math.min(totalPages, prev + 1);
       if (next !== prev) {
-        // скроллим к каталогу только при нажатии "Далее"
-        scrollToCatalog();
+        shouldScrollAfterPageChange.current = true;
       }
       return next;
     });
