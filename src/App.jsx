@@ -7,25 +7,74 @@ import RegisterPage from "./register.jsx";
 import LoginPage from "./login.jsx";
 
 const CITIES = [
-  { id: "moscow", name: "Москва", top: "63%", left: "37%" },
-  { id: "spb", name: "Санкт-Петербург", top: "49%", left: "34%" },
-  { id: "rostov", name: "Ростов-на-Дону", top: "73%", left: "35%" },
-  { id: "omsk", name: "Омск", top: "69%", left: "61%" },
-  { id: "nn", name: "Нижний Новгород", top: "59%", left: "41%" },
-  { id: "kazan", name: "Казань", top: "63%", left: "44%" },
-  { id: "samara", name: "Самара", top: "67%", left: "44%" },
-  { id: "volgograd", name: "Волгоград", top: "75%", left: "40%" },
-  { id: "voronezh", name: "Воронеж", top: "69%", left: "38%" },
-  { id: "ufa", name: "Уфа", top: "64%", left: "50%" },
-  { id: "perm", name: "Пермь", top: "59%", left: "50%" },
-  { id: "ekb", name: "Екатеринбург", top: "60%", left: "54%" },
-  { id: "chelyabinsk", name: "Челябинск", top: "65%", left: "56%" },
-  { id: "novosibirsk", name: "Новосибирск", top: "69%", left: "66%" },
-  { id: "krasnoyarsk", name: "Красноярск", top: "64%", left: "72%" },
+  { id: "moscow", name: "Москва", top: "47%", left: "14%" },
+  { id: "spb", name: "Санкт-Петербург", top: "33%", left: "15%" },
+  { id: "rostov", name: "Ростов-на-Дону", top: "65%", left: "8%" },
+  { id: "omsk", name: "Омск", top: "74%", left: "36%" },
+  { id: "nn", name: "Нижний Новгород", top: "53%", left: "18%" },
+  { id: "kazan", name: "Казань", top: "61%", left: "20%" },
+  { id: "samara", name: "Самара", top: "67%", left: "18%" },
+  { id: "volgograd", name: "Волгоград", top: "67%", left: "13%" },
+  { id: "voronezh", name: "Воронеж", top: "58%", left: "10%" },
+  { id: "ufa", name: "Уфа", top: "73%", left: "32%" },
+  { id: "perm", name: "Пермь", top: "60%", left: "27%" },
+  { id: "ekb", name: "Екатеринбург", top: "65%", left: "30%" },
+  { id: "chelyabinsk", name: "Челябинск", top: "71%", left: "29%" },
+  { id: "novosibirsk", name: "Новосибирск", top: "82%", left: "42%" },
+  { id: "krasnoyarsk", name: "Красноярск", top: "80%", left: "50%" },
   { id: "vladivostok", name: "Владивосток", top: "85%", left: "88%" }
 ];
 
 const PAGE_SIZE = 9;
+
+// --- все возможные значения по данным из places.json ---
+// тип помещения
+const ALL_PLACE_TYPES = Array.from(
+  new Set(
+    (placesData || [])
+      .map((p) => (p.type || "").trim())
+      .filter(Boolean)
+  )
+);
+
+// города
+const ALL_CITIES = Array.from(
+  new Set(
+    (placesData || [])
+      .map((p) => (p.city || "").trim())
+      .filter(Boolean)
+  )
+);
+
+// бейджи (будут использоваться как "Цены": Бесплатно / PP)
+const ALL_BADGES = Array.from(
+  new Set(
+    (placesData || [])
+      .map((p) => (p.badge || "").trim())
+      .filter(Boolean)
+  )
+);
+
+// рейтинги (строки "4.5", "4.8", ...)
+const ALL_RATINGS = Array.from(
+  new Set(
+    (placesData || [])
+      .map((p) =>
+        typeof p.rating === "number" ? p.rating.toFixed(1) : ""
+      )
+      .filter(Boolean)
+  )
+);
+
+// удобства (features – плоский список)
+const ALL_FEATURES = Array.from(
+  new Set(
+    (placesData || [])
+      .flatMap((p) => p.features || [])
+      .map((f) => (f || "").trim())
+      .filter(Boolean)
+  )
+);
 
 function shuffle(array) {
   const arr = [...array];
@@ -42,8 +91,12 @@ function App() {
 
   const [isLoggedIn, setIsLoggedIn] = useState(false);
 
-  // активный фильтр (для десктопа и карусели на мобиле)
+  // активный таб (подсветка)
   const [activeFilterIndex, setActiveFilterIndex] = useState(0);
+  // какой фильтр сейчас открыт дропдауном (null = ничего)
+  const [openFilterIndex, setOpenFilterIndex] = useState(null);
+  // строка поиска внутри текущего дропдауна
+  const [filterSearch, setFilterSearch] = useState("");
 
   // текущая страница каталога
   const [currentPage, setCurrentPage] = useState(1);
@@ -51,31 +104,190 @@ function App() {
   const navigate = useNavigate();
 
   const catalogRef = useRef(null);
-  // скроллить ли к каталогу после смены страницы
   const shouldScrollAfterPageChange = useRef(false);
+
+  // ---- выбранные значения по каждому фильтру ----
+  const [selectedTypes, setSelectedTypes] = useState(ALL_PLACE_TYPES);
+  const [selectedCities, setSelectedCities] = useState(ALL_CITIES);
+  const [selectedBadges, setSelectedBadges] = useState(ALL_BADGES);
+  const [selectedRatings, setSelectedRatings] = useState(ALL_RATINGS);
+  const [selectedFeatures, setSelectedFeatures] = useState(ALL_FEATURES);
+
+  // --- функции переключения опций в дропдауне ---
+  const toggleTypeOption = (type) => {
+    setSelectedTypes((prev) =>
+      prev.includes(type)
+        ? prev.filter((t) => t !== type)
+        : [...prev, type]
+    );
+    setCurrentPage(1);
+  };
+
+  const toggleCityOption = (city) => {
+    setSelectedCities((prev) =>
+      prev.includes(city)
+        ? prev.filter((c) => c !== city)
+        : [...prev, city]
+    );
+    setCurrentPage(1);
+  };
+
+  const toggleBadgeOption = (badge) => {
+    setSelectedBadges((prev) =>
+      prev.includes(badge)
+        ? prev.filter((b) => b !== badge)
+        : [...prev, badge]
+    );
+    setCurrentPage(1);
+  };
+
+  const toggleRatingOption = (rating) => {
+    setSelectedRatings((prev) =>
+      prev.includes(rating)
+        ? prev.filter((r) => r !== rating)
+        : [...prev, rating]
+    );
+    setCurrentPage(1);
+  };
+
+  const toggleFeatureOption = (feature) => {
+    setSelectedFeatures((prev) =>
+      prev.includes(feature)
+        ? prev.filter((f) => f !== feature)
+        : [...prev, feature]
+    );
+    setCurrentPage(1);
+  };
+
+  // --- конфиг для каждого таба фильтра ---
+  const filterTabs = [
+    "Город",
+    "Тип помещения",
+    "Уровень шума",
+    "Цены",
+    "Рейтинг",
+    "Удобства",
+  ];
+
+  const getFilterConfig = (index) => {
+    switch (index) {
+      case 0:
+        return {
+          allOptions: ALL_CITIES,
+          selected: selectedCities,
+          toggle: toggleCityOption,
+          placeholder: "Поиск по городу",
+        };
+      case 1:
+        return {
+          allOptions: ALL_PLACE_TYPES,
+          selected: selectedTypes,
+          toggle: toggleTypeOption,
+          placeholder: "Поиск по типу",
+        };
+      case 3:
+        return {
+          allOptions: ALL_BADGES,
+          selected: selectedBadges,
+          toggle: toggleBadgeOption,
+          placeholder: "Поиск по ценам",
+        };
+      case 4:
+        return {
+          allOptions: ALL_RATINGS,
+          selected: selectedRatings,
+          toggle: toggleRatingOption,
+          placeholder: "Поиск по рейтингу",
+        };
+      case 5:
+        return {
+          allOptions: ALL_FEATURES,
+          selected: selectedFeatures,
+          toggle: toggleFeatureOption,
+          placeholder: "Поиск по удобствам",
+        };
+      // "Уровень шума" (index=2) — пока нет поля в JSON
+      default:
+        return {
+          allOptions: [],
+          selected: [],
+          toggle: () => {},
+          placeholder: "Нет данных для этого фильтра",
+        };
+    }
+  };
+
+  const currentFilterConfig = getFilterConfig(openFilterIndex);
+  const filteredOptions = currentFilterConfig.allOptions.filter((opt) =>
+    opt.toLowerCase().includes(filterSearch.toLowerCase())
+  );
+
+  // --- применяем фильтры к данным ---
+  const filteredPlaces = placesData.filter((place) => {
+    // тип
+    if (
+      selectedTypes.length &&
+      !selectedTypes.includes(place.type)
+    ) {
+      return false;
+    }
+
+    // город
+    if (
+      selectedCities.length &&
+      !selectedCities.includes(place.city)
+    ) {
+      return false;
+    }
+
+    // цены = badge (если есть badge и при этом выбранные бейджи заданы)
+    if (selectedBadges.length && place.badge) {
+      if (!selectedBadges.includes(place.badge)) return false;
+    }
+
+    // рейтинг
+    if (selectedRatings.length && typeof place.rating === "number") {
+      const ratingKey = place.rating.toFixed(1);
+      if (!selectedRatings.includes(ratingKey)) return false;
+    }
+
+    // удобства: место должно содержать хотя бы одно выбранное удобство
+    if (selectedFeatures.length) {
+      const feats = place.features || [];
+      const hasAny = feats.some((f) =>
+        selectedFeatures.includes(f)
+      );
+      if (!hasAny) return false;
+    }
+
+    return true;
+  });
 
   const totalPages = Math.max(
     1,
-    Math.ceil(placesData.length / PAGE_SIZE)
+    Math.ceil(filteredPlaces.length / PAGE_SIZE)
   );
 
-  // гарантируем, что не уйдём за последнюю страницу
   useEffect(() => {
     setCurrentPage((prev) => Math.min(prev, totalPages));
   }, [totalPages]);
 
   const safeCurrentPage = Math.min(currentPage, totalPages);
   const startIndex = (safeCurrentPage - 1) * PAGE_SIZE;
-  const visiblePlaces = placesData.slice(startIndex, startIndex + PAGE_SIZE);
+  const visiblePlaces = filteredPlaces.slice(
+    startIndex,
+    startIndex + PAGE_SIZE
+  );
+
+  const hasPlaces = filteredPlaces.length > 0;
 
   useEffect(() => {
-    // скроллим только если перед этим пользователь нажал кнопку пагинации
     if (!shouldScrollAfterPageChange.current) return;
 
     shouldScrollAfterPageChange.current = false;
     if (!catalogRef.current) return;
 
-    const headerOffset = 80; // можно подстроить под высоту шапки
+    const headerOffset = 80;
     const rect = catalogRef.current.getBoundingClientRect();
     const absoluteTop = rect.top + window.scrollY;
     const targetTop = absoluteTop - headerOffset;
@@ -111,7 +323,21 @@ function App() {
     });
   };
 
-  // --- Яндекс-карта "маршрут к рабочему месту мечты" ---
+  const scrollToCatalog = () => {
+    if (!catalogRef.current) return;
+
+    const headerOffset = 80; // подстрой под высоту шапки, если нужно
+    const rect = catalogRef.current.getBoundingClientRect();
+    const absoluteTop = rect.top + window.scrollY;
+    const targetTop = absoluteTop - headerOffset;
+
+    window.scrollTo({
+      top: targetTop,
+      behavior: "smooth",
+    });
+  };
+
+  // --- Яндекс-карта ---
   useEffect(() => {
     if (typeof window === "undefined") return;
 
@@ -126,17 +352,17 @@ function App() {
       const map = new window.ymaps.Map("yandex-map", {
         center: [55.751244, 37.618423],
         zoom: 11,
-        controls: ["zoomControl", "geolocationControl"]
+        controls: ["zoomControl", "geolocationControl"],
       });
 
       const placemark = new window.ymaps.Placemark(
         [55.751244, 37.618423],
         {
           hintContent: "Рабочее место мечты",
-          balloonContent: "Пример точки на карте"
+          balloonContent: "Пример точки на карте",
         },
         {
-          preset: "islands#greenIcon"
+          preset: "islands#greenIcon",
         }
       );
 
@@ -166,7 +392,7 @@ function App() {
     document.body.appendChild(script);
   }, []);
 
-  // --- анимация городов на карте ---
+  // --- анимация городов ---
   useEffect(() => {
     const fixed = CITIES.slice(0, 4);
     const shuffledRest = shuffle(CITIES.slice(4));
@@ -191,26 +417,32 @@ function App() {
     return () => clearInterval(interval);
   }, [orderedCities]);
 
-  const filterTabs = [
-    "Город",
-    "Тип помещения",
-    "Уровень шума",
-    "Цены",
-    "Рейтинг",
-    "Удобства"
-  ];
+  const handleFilterTabClick = (index) => {
+    setActiveFilterIndex(index);
+    setFilterSearch("");
 
-  const handleFilterPrev = () => {
-    setActiveFilterIndex(
-      (prev) => (prev - 1 + filterTabs.length) % filterTabs.length
+    setOpenFilterIndex((prev) =>
+      prev === index ? null : index
     );
   };
 
-  const handleFilterNext = () => {
-    setActiveFilterIndex((prev) => (prev + 1) % filterTabs.length);
+  const handleFilterPrev = () => {
+    setActiveFilterIndex((prev) => {
+      const next =
+        (prev - 1 + filterTabs.length) % filterTabs.length;
+      setOpenFilterIndex(null);
+      return next;
+    });
   };
 
-  // клик по кнопке "Профиль" — теперь ведёт на /login
+  const handleFilterNext = () => {
+    setActiveFilterIndex((prev) => {
+      const next = (prev + 1) % filterTabs.length;
+      setOpenFilterIndex(null);
+      return next;
+    });
+  };
+
   const handleProfileClick = () => {
     if (!isLoggedIn) {
       navigate("/login");
@@ -225,12 +457,23 @@ function App() {
       <header className="header">
         <div className="container header__inner">
           <div className="logo" onClick={() => navigate("/")}>
-            <img src="/logo1.svg" alt="SPACE logo" className="logo__image" />
+            <img
+              src="/logo1.svg"
+              alt="SPACE logo"
+              className="logo__image"
+            />
           </div>
 
-          <button className="profile-btn" onClick={handleProfileClick}>
+          <button
+            className="profile-btn"
+            onClick={handleProfileClick}
+          >
             <span className="profile-btn__icon">
-              <img src="/account.svg" alt="Профиль" className="logo__image" />
+              <img
+                src="/account.svg"
+                alt="Профиль"
+                className="logo__image"
+              />
             </span>
             <span className="profile-btn__text">Профиль</span>
           </button>
@@ -255,11 +498,13 @@ function App() {
                     </h1>
 
                     <p className="hero__subtitle">
-                      Тысячи проверенных кафе, коворкингов и библиотек с
-                      Wi-Fi, розетками и комфортной атмосферой.
+                      Тысячи проверенных кафе, коворкингов и
+                      библиотек с Wi-Fi, розетками и комфортной
+                      атмосферой.
                     </p>
-
-                    <button className="hero__cta">Погнали</button>
+                    <button className="hero__cta" onClick={scrollToCatalog}>
+                      Погнали
+                    </button>
                   </div>
                 </section>
 
@@ -323,7 +568,8 @@ function App() {
                       Находи места по всей России
                     </h2>
                     <p className="map-section__subtitle">
-                      Мы представлены во всех городах-миллионниках
+                      Мы представлены во всех
+                      городах-миллионниках
                     </p>
 
                     <div className="map-section__map-wrapper">
@@ -340,9 +586,14 @@ function App() {
                             key={city.id}
                             className={
                               "city-marker" +
-                              (isVisible ? " city-marker--visible" : "")
+                              (isVisible
+                                ? " city-marker--visible"
+                                : "")
                             }
-                            style={{ top: city.top, left: city.left }}
+                            style={{
+                              top: city.top,
+                              left: city.left,
+                            }}
                           >
                             <img
                               src="/pin-18.png"
@@ -360,55 +611,131 @@ function App() {
                 </section>
 
                 {/* КАТАЛОГ МЕСТ */}
-                <section className="catalog" ref={catalogRef}>
+                <section
+                  className="catalog"
+                  ref={catalogRef}
+                >
                   <div className="container">
-                    {/* Фильтры — десктопная версия */}
-                    <div className="catalog__filters catalog__filters-desktop">
-                      {filterTabs.map((label, index) => (
-                        <button
-                          key={label}
-                          type="button"
-                          className={
-                            "catalog__filter" +
-                            (index === activeFilterIndex
-                              ? " catalog__filter--active"
-                              : "")
-                          }
-                          onClick={() => setActiveFilterIndex(index)}
-                        >
-                          {label}
-                        </button>
-                      ))}
-                    </div>
+                    {/* Обёртка фильтров + дропдаун */}
+                    <div className="catalog__filters-wrapper">
+                      {/* Фильтры — десктоп */}
+                      <div className="catalog__filters catalog__filters-desktop">
+                        {filterTabs.map((label, index) => {
+                          const isActive =
+                            index === activeFilterIndex;
 
-                    {/* Фильтры — мобильная карусель */}
-                    <div className="catalog__filters-mobile">
-                      <div className="catalog__filters-mobile-box">
-                        <button
-                          type="button"
-                          className="catalog__filters-arrow catalog__filters-arrow--left"
-                          onClick={handleFilterPrev}
-                        >
-                          ←
-                        </button>
-
-                        <div className="catalog__filters-mobile-center">
-                          <span
-                            key={activeFilterIndex}
-                            className="catalog__filters-mobile-label"
-                          >
-                            {filterTabs[activeFilterIndex]}
-                          </span>
-                        </div>
-
-                        <button
-                          type="button"
-                          className="catalog__filters-arrow catalog__filters-arrow--right"
-                          onClick={handleFilterNext}
-                        >
-                          →
-                        </button>
+                          return (
+                            <button
+                              key={label}
+                              type="button"
+                              className={
+                                "catalog__filter" +
+                                (isActive
+                                  ? " catalog__filter--active"
+                                  : "")
+                              }
+                              onClick={() =>
+                                handleFilterTabClick(index)
+                              }
+                            >
+                              {label}
+                            </button>
+                          );
+                        })}
                       </div>
+
+                      {/* Фильтры — мобильная карусель */}
+                      <div className="catalog__filters-mobile">
+                        <div className="catalog__filters-mobile-box">
+                          <button
+                            type="button"
+                            className="catalog__filters-arrow catalog__filters-arrow--left"
+                            onClick={handleFilterPrev}
+                          >
+                            ←
+                          </button>
+
+                          <div className="catalog__filters-mobile-center">
+                            <button
+                              type="button"
+                              className="catalog__filters-mobile-label-btn"
+                              onClick={() => {
+                                setOpenFilterIndex((prev) =>
+                                  prev === activeFilterIndex
+                                    ? null
+                                    : activeFilterIndex
+                                );
+                              }}
+                            >
+                              {filterTabs[activeFilterIndex]}
+                            </button>
+                          </div>
+
+                          <button
+                            type="button"
+                            className="catalog__filters-arrow catalog__filters-arrow--right"
+                            onClick={handleFilterNext}
+                          >
+                            →
+                          </button>
+                        </div>
+                      </div>
+
+                      {/* Универсальный дропдаун для всех фильтров */}
+                      {openFilterIndex !== null && (
+                        <div className="catalog-filter-dropdown">
+                          <input
+                            type="text"
+                            className="catalog-filter-dropdown__search"
+                            placeholder={
+                              currentFilterConfig.placeholder
+                            }
+                            value={filterSearch}
+                            onChange={(e) =>
+                              setFilterSearch(e.target.value)
+                            }
+                          />
+
+                          <div className="catalog-filter-dropdown__list">
+                            {filteredOptions.length === 0 ? (
+                              <div className="catalog-filter-dropdown__empty">
+                                Ничего не найдено
+                              </div>
+                            ) : (
+                              filteredOptions.map((option) => {
+                                const checked =
+                                  currentFilterConfig.selected.includes(
+                                    option
+                                  );
+                                return (
+                                  <button
+                                    key={option}
+                                    type="button"
+                                    className="catalog-filter-dropdown__item"
+                                    onClick={() =>
+                                      currentFilterConfig.toggle(
+                                        option
+                                      )
+                                    }
+                                  >
+                                    <span
+                                      className={
+                                        "catalog-filter-dropdown__check" +
+                                        (checked
+                                          ? " catalog-filter-dropdown__check--active"
+                                          : "")
+                                      }
+                                    >
+                                      {checked ? "✓" : ""}
+                                    </span>
+                                    <span>{option}</span>
+                                  </button>
+                                );
+                              })
+                            )}
+                          </div>
+                        </div>
+                      )}
                     </div>
 
                     {/* Сетка карточек */}
@@ -417,7 +744,9 @@ function App() {
                         <article
                           key={place.id}
                           className="place-card"
-                          onClick={() => navigate(`/place/${place.id}`)}
+                          onClick={() =>
+                            navigate(`/place/${place.id}`)
+                          }
                         >
                           <div className="place-card__image-wrapper">
                             <img
@@ -482,21 +811,19 @@ function App() {
                       ))}
                     </div>
 
-                    {/* ПАГИНАЦИЯ */}
+                    {/* Пагинация */}
                     <div className="catalog__pagination">
                       <button
                         type="button"
                         className="catalog__pagination-btn"
                         onClick={handlePrev}
                         disabled={
-                          safeCurrentPage === 1 ||
-                          placesData.length === 0
+                          safeCurrentPage === 1 || !hasPlaces
                         }
                       >
                         ←Назад
                       </button>
 
-                      {/* Номера страниц — только на десктопе */}
                       <div className="catalog__pagination-pages">
                         {Array.from(
                           { length: totalPages },
@@ -512,7 +839,9 @@ function App() {
                                     ? " catalog__page-btn--active"
                                     : "")
                                 }
-                                onClick={() => handlePageClick(page)}
+                                onClick={() =>
+                                  handlePageClick(page)
+                                }
                               >
                                 {page}
                               </button>
@@ -521,7 +850,6 @@ function App() {
                         )}
                       </div>
 
-                      {/* Текущий номер — на мобильных */}
                       <div className="catalog__pagination-current-mobile">
                         {safeCurrentPage}
                       </div>
@@ -532,7 +860,7 @@ function App() {
                         onClick={handleNext}
                         disabled={
                           safeCurrentPage === totalPages ||
-                          placesData.length === 0
+                          !hasPlaces
                         }
                       >
                         Далее→
@@ -541,7 +869,7 @@ function App() {
                   </div>
                 </section>
 
-                {/* Яндекс-карта: построить маршрут */}
+                {/* Яндекс-карта: маршрут */}
                 <section className="route-map">
                   <div className="route-map__inner">
                     <h2 className="route-map__title">
@@ -549,7 +877,10 @@ function App() {
                     </h2>
 
                     <div className="route-map__map-wrapper">
-                      <div id="yandex-map" className="route-map__map" />
+                      <div
+                        id="yandex-map"
+                        className="route-map__map"
+                      />
                     </div>
                   </div>
                 </section>
@@ -561,8 +892,8 @@ function App() {
                       Знаешь отличное место?
                     </h2>
                     <p className="footer-cta__subtitle">
-                      Поделись с сообществом и помоги другим найти идеальное
-                      пространство для работы
+                      Поделись с сообществом и помоги другим найти
+                      идеальное пространство для работы
                     </p>
                     <button
                       className="footer-cta__btn"
@@ -576,13 +907,13 @@ function App() {
             }
           />
 
-          {/* СТРАНИЦА КОНКРЕТНОГО МЕСТА */}
+          {/* Страница места */}
           <Route path="/place/:id" element={<PlacePage />} />
 
-          {/* СТРАНИЦА РЕГИСТРАЦИИ */}
+          {/* Регистрация */}
           <Route path="/register" element={<RegisterPage />} />
 
-          {/* СТРАНИЦА ВХОДА */}
+          {/* Логин */}
           <Route
             path="/login"
             element={<LoginPage onLogin={() => setIsLoggedIn(true)} />}
@@ -595,13 +926,20 @@ function App() {
         <div className="container footer__inner">
           <div className="footer__brand">
             <div className="footer__logo-circle">
-              <img src="/geo.svg" alt="" className="footer__logo-icon" />
+              <img
+                src="/geo.svg"
+                alt=""
+                className="footer__logo-icon"
+              />
             </div>
-            <span className="footer__brand-name">ALLSPACE</span>
+            <span className="footer__brand-name">
+              ALLSPACE
+            </span>
           </div>
 
           <div className="footer__copy">
-            © {new Date().getFullYear()} ALLSPACE. Все права защищены.
+            © {new Date().getFullYear()} ALLSPACE. Все права
+            защищены.
           </div>
         </div>
       </footer>
