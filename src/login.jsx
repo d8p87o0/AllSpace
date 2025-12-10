@@ -11,26 +11,61 @@ function LoginPage({ onLogin }) {
     password: "",
   });
 
+  const [resultText, setResultText] = useState("");
+  const [isLoading, setIsLoading] = useState(false);
+  const [hasError, setHasError] = useState(false);
+
   const handleChange = (event) => {
     const { name, value } = event.target;
     setForm((prev) => ({
       ...prev,
       [name]: value,
     }));
+
+    // при изменении очищаем старую ошибку
+    setHasError(false);
+    setResultText("");
   };
 
-  const handleSubmit = (event) => {
+  const handleSubmit = async (event) => {
     event.preventDefault();
 
-    // тут потом будет реальный запрос на бэк
-    console.log("Вход:", form);
+    setResultText("");
+    setHasError(false);
+    setIsLoading(true);
 
-    if (onLogin) {
-      onLogin();
+    try {
+      const response = await fetch("http://localhost:3001/api/login", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          login: form.login,
+          password: form.password,
+        }),
+      });
+
+      const data = await response.json();
+
+      if (data.ok) {
+        // успешный вход
+        if (onLogin) {
+          onLogin();
+        }
+        navigate("/");
+      } else {
+        // неверный логин или пароль
+        setHasError(true);
+        setResultText("Неверный логин или пароль.");
+      }
+    } catch (error) {
+      console.error("Ошибка при входе:", error);
+      setHasError(true);
+      setResultText("Ошибка соединения с сервером.");
+    } finally {
+      setIsLoading(false);
     }
-
-    // после логина отправляем на главную (или куда тебе нужно)
-    navigate("/");
   };
 
   return (
@@ -54,10 +89,17 @@ function LoginPage({ onLogin }) {
         <div className="login-card">
           <h2 className="login-card__title">Войти</h2>
 
+          {/* 🔴 Баннер ошибки — сразу под заголовком, над формой */}
+          {hasError && resultText && (
+            <div className="login-error-banner">
+              {resultText}
+            </div>
+          )}
+
           <form className="login-form" onSubmit={handleSubmit}>
             <input
               type="text"
-              className="login-input"
+              className={`login-input ${hasError ? "login-input--error" : ""}`}
               placeholder="Логин"
               name="login"
               value={form.login}
@@ -67,7 +109,7 @@ function LoginPage({ onLogin }) {
 
             <input
               type="password"
-              className="login-input"
+              className={`login-input ${hasError ? "login-input--error" : ""}`}
               placeholder="Пароль"
               name="password"
               value={form.password}
@@ -75,8 +117,8 @@ function LoginPage({ onLogin }) {
               required
             />
 
-            <button type="submit" className="login-submit">
-              Войти
+            <button type="submit" className="login-submit" disabled={isLoading}>
+              {isLoading ? "Проверяем..." : "Войти"}
             </button>
           </form>
 
