@@ -1112,11 +1112,7 @@
   margin: 0 auto 32px;
 }
 
-/* полоса десктопных фильтров как якорь для выпадашки */
-.catalog__filters-desktop {
-  position: relative;
-  z-index: 2; /* чтобы дропдаун был поверх границ блока ниже */
-}
+
 
 /* ОВЕРЛЕЙ для дропдауна "Тип помещения" — над всем контентом */
 .catalog-filter-overlay {
@@ -1244,15 +1240,6 @@
 
   .catalog__pagination-btn {
     padding: 8px 16px;
-  }
-}
-
-@media (max-width: 768px) {
-  .catalog-filter-dropdown {
-    left: 0;
-    right: 0;
-    width: 100%;
-    max-width: none;
   }
 }
 
@@ -1550,41 +1537,6 @@
   text-overflow: ellipsis;
 }
 
-.login-input-wrapper {
-  position: relative;
-}
-
-/* контейнер с подсказками */
-.city-suggestions {
-  position: absolute;
-  left: 0;
-  right: 0;
-  top: 100%;
-  margin-top: 4px;
-  background: #ffffff;
-  border-radius: 12px;
-  box-shadow: 0 4px 16px rgba(15, 35, 52, 0.12);
-  max-height: 200px;
-  overflow-y: auto;
-  z-index: 10;
-}
-
-/* отдельная подсказка */
-.city-suggestions__item {
-  display: block;
-  width: 100%;
-  padding: 8px 14px;
-  text-align: left;
-  background: transparent;
-  border: none;
-  cursor: pointer;
-  font-size: 14px;
-}
-
-.city-suggestions__item:hover {
-  background-color: #f5f5f5;
-}
-
 .place-page__description {
   margin: 12px 0 0;
   font-size: 14px;
@@ -1625,27 +1577,6 @@
   align-items: center;
   justify-content: space-between;
   gap: 12px;
-}
-
-/* ---------- Header ---------- */
-
-/* Подсветка ошибки в полях логина/пароля */
-/* Красный баннер ошибки над формой */
-.login-error-banner {
-  margin-top: 12px;
-  margin-bottom: 16px;
-  padding: 10px 14px;
-  border-radius: 12px;
-  background-color: #f9ecec;       /* нежный красный фон */
-  border: 1px solid #e0c1c1;       /* тонкая рамка */
-  color: #b3261e;                  /* тёмно-красный текст */
-  font-size: 14px;
-}
-
-/* Полупрозрачная красная подсветка для инпутов (можно оставить/убрать) */
-.login-input--error {
-  background-color: rgba(255, 0, 0, 0.05);
-  border-color: rgba(255, 0, 0, 0.5);
 }
 
 /* Особенности */
@@ -2048,4 +1979,152 @@
   min-width: 60px;
   text-align: center;
 }
+}
+
+/* ===== Профиль ===== */
+
+.profile {
+  padding: 40px 0 60px;
+}
+
+.profile__container {
+  display: flex;
+  flex-direction: column;
+  gap: 32px;
+}
+
+.profile__card {
+  background: #ffffff;
+  border-radius: 24px;
+  padding: 24px 24px 20px;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.06);
+}
+
+.profile__info {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.profile__name {
+  font-size: 32px;
+  line-height: 1.2;
+  font-weight: 700;
+}
+
+.profile__meta {
+  font-size: 18px;
+  color: #666;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+}
+
+.profile__meta-item {
+  font-size: 18px;
+}
+
+.profile__meta-dot {
+  font-size: 18px;
+  opacity: 0.6;
+}
+
+.profile__email {
+  font-size: 16px;
+  color: #888;
+  word-break: break-all;
+}
+
+.profile__empty-user {
+  font-size: 16px;
+  color: #555;
+}
+
+.profile__link-button {
+  border: none;
+  background: none;
+  color: #2f80ed;
+  cursor: pointer;
+  padding: 0;
+  font: inherit;
+  text-decoration: underline;
+}
+
+/* Блок избранных мест */
+
+.profile__favorites {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.profile__favorites-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.profile__favorites-title {
+  font-size: 22px;
+  font-weight: 600;
+}
+
+.profile__favorites-count {
+  min-width: 32px;
+  height: 32px;
+  border-radius: 999px;
+  padding: 0 10px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: #f2f4ff;
+  color: #3f51b5;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.profile__favorites-empty {
+  font-size: 15px;
+  color: #666;
+}
+
+/* сетка избранного использует те же карточки, что и каталог */
+.profile__favorites-grid {
+  margin-top: 8px;
+}
+
+/* Адаптив для мобилок */
+
+@media (max-width: 768px) {
+  .profile {
+    padding: 24px 0 40px;
+  }
+
+  .profile__card {
+    padding: 20px 16px 18px;
+    border-radius: 20px;
+  }
+
+  .profile__name {
+    font-size: 24px;
+  }
+
+  .profile__meta {
+    font-size: 14px;
+  }
+
+  .profile__meta-item,
+  .profile__meta-dot {
+    font-size: 14px;
+  }
+
+  .profile__email {
+    font-size: 13px;
+  }
+
+  .profile__favorites-title {
+    font-size: 18px;
+  }
 }

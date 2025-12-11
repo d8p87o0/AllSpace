@@ -5,6 +5,8 @@ import PlacePage from "./PlacePage.jsx";
 import "./App.css";
 import RegisterPage from "./register.jsx";
 import LoginPage from "./login.jsx";
+import VerifyEmailPage from "./VerifyEmailPage.jsx";
+import { ProfilePage } from "./ProfilePage.jsx";
 
 const CITIES = [
   { id: "moscow", name: "Москва", top: "47%", left: "14%" },
@@ -90,6 +92,16 @@ function App() {
   const [visibleCount, setVisibleCount] = useState(0);
 
   const [isLoggedIn, setIsLoggedIn] = useState(false);
+
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem("user");
+      setIsLoggedIn(!!raw);
+    } catch (e) {
+      console.error("Не удалось прочитать user из localStorage:", e);
+      setIsLoggedIn(false);
+    }
+  }, []);
 
   // активный таб (подсветка)
   const [activeFilterIndex, setActiveFilterIndex] = useState(0);
@@ -447,7 +459,7 @@ function App() {
     if (!isLoggedIn) {
       navigate("/login");
     } else {
-      console.log("Открываем профиль пользователя");
+      navigate("/profile");
     }
   };
 
@@ -909,15 +921,13 @@ function App() {
 
           {/* Страница места */}
           <Route path="/place/:id" element={<PlacePage />} />
-
-          {/* Регистрация */}
           <Route path="/register" element={<RegisterPage />} />
-
-          {/* Логин */}
+          <Route path="/verify-email" element={<VerifyEmailPage />} />
           <Route
             path="/login"
             element={<LoginPage onLogin={() => setIsLoggedIn(true)} />}
           />
+          <Route path="/profile" element={<ProfilePage />} />
         </Routes>
       </main>
 

@@ -1,5 +1,5 @@
 // RegisterPage.jsx
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import "./App.css";
 
@@ -10,7 +10,7 @@ function RegisterPage() {
     firstName: "",
     lastName: "",
     city: "",
-    phone: "",
+    phone: "", // почта
     status: "",
     login: "",
     passwordVisible: "",
@@ -25,8 +25,25 @@ function RegisterPage() {
   // 🔎 подсказки по городу
   const [citySuggestions, setCitySuggestions] = useState([]);
 
+  // 🔐 ошибки и валидность формы
+  const [emailError, setEmailError] = useState("");
+  const [passwordError, setPasswordError] = useState("");
+  const [formValid, setFormValid] = useState(false);
+
+  // 👁‍🗨 флаг "пользователь уже ушёл с поля почты"
+  const [emailDirty, setEmailDirty] = useState(false);
+
+  useEffect(() => {
+    if (emailError || passwordError) {
+      setFormValid(false);
+    } else {
+      setFormValid(true);
+    }
+  }, [emailError, passwordError]);
+
   const handleChange = (event) => {
     const { name, value } = event.target;
+
     setForm((prev) => ({
       ...prev,
       [name]: value,
@@ -71,6 +88,54 @@ function RegisterPage() {
     setCitySuggestions([]);
   };
 
+  // ✅ валидация почты
+  const emailHandler = (e) => {
+    const value = e.target.value;
+
+    setForm((prev) => ({
+      ...prev,
+      phone: value,
+    }));
+
+    setHasError(false);
+    setResultText("");
+
+    const re =
+      /^(([^<>()[\]\\.,;:\s@"]+(\.[^<>()[\]\\.,;:\s@"]+)*)|.(".+"))@((\[[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\])|(([a-zA-Z\-0-9]+\.)+[a-zA-Z]{2,}))$/;
+
+    if (!re.test(String(value).toLowerCase())) {
+      setEmailError("Некорректный емейл");
+    } else {
+      setEmailError("");
+    }
+  };
+
+  // blur по полю почты
+  const handleBlur = (e) => {
+    if (e.target.name === "phone") {
+      setEmailDirty(true);
+    }
+  };
+
+  // ✅ валидация пароля (первое поле)
+  const passwordHandler = (e) => {
+    const value = e.target.value;
+
+    setForm((prev) => ({
+      ...prev,
+      passwordVisible: value,
+    }));
+
+    setHasError(false);
+    setResultText("");
+
+    if (!value) {
+      setPasswordError("Пароль не может быть пустым");
+    } else {
+      setPasswordError("");
+    }
+  };
+
   const handleSubmit = async (event) => {
     event.preventDefault();
 
@@ -81,7 +146,13 @@ function RegisterPage() {
     setResultText("");
     setHasError(false);
 
-    // 1️⃣ пароли должны совпадать
+    // валидация фронта
+    if (emailError || passwordError) {
+      setHasError(true);
+      setResultText("Пожалуйста, исправьте ошибки в форме.");
+      return;
+    }
+
     if (form.passwordVisible !== form.passwordHidden) {
       setHasError(true);
       setResultText("Пароли не совпадают.");
@@ -91,7 +162,8 @@ function RegisterPage() {
     setIsLoading(true);
 
     try {
-      const response = await fetch("http://localhost:3001/api/register", {
+      // 🔥 ШАГ 1: отправляем данные для генерации и отправки кода
+      const response = await fetch("http://localhost:3001/api/register/start", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -102,7 +174,7 @@ function RegisterPage() {
           firstName: form.firstName,
           lastName: form.lastName,
           city: form.city,
-          email: form.phone,
+          email: form.phone, // почта
           status: form.status,
         }),
       });
@@ -110,13 +182,14 @@ function RegisterPage() {
       const data = await response.json();
 
       if (data.ok) {
-        navigate("/login");
+        // переходим на страницу ввода кода
+        navigate("/verify-email", { state: { email: form.phone } });
       } else {
         setHasError(true);
-        setResultText(data.message || "Ошибка регистрации.");
+        setResultText(data.message || "Ошибка отправки кода.");
       }
     } catch (error) {
-      console.error("Ошибка регистрации:", error);
+      console.error("Ошибка регистрации (start):", error);
       setHasError(true);
       setResultText("Ошибка соединения с сервером.");
     } finally {
@@ -200,15 +273,24 @@ function RegisterPage() {
               )}
             </div>
 
-            <input
-              type="tel"
-              className="login-input"
-              placeholder="Почта"
-              name="phone"
-              value={form.phone}
-              onChange={handleChange}
-              required
-            />
+            {/* Почта с валидацией, сообщение только после blur */}
+            <div className="login-input-wrapper">
+              <input
+                type="email"
+                className={`login-input ${
+                  emailDirty && emailError ? "login-input--error" : ""
+                }`}
+                placeholder="Почта"
+                name="phone"
+                value={form.phone}
+                onChange={emailHandler}
+                onBlur={handleBlur}
+                required
+              />
+              {emailDirty && emailError && (
+                <div className="login-input-error">{emailError}</div>
+              )}
+            </div>
 
             <select
               name="status"
@@ -237,17 +319,23 @@ function RegisterPage() {
               required
             />
 
-            <input
-              type="text"
-              className={`login-input ${
-                hasError ? "login-input--error" : ""
-              }`}
-              placeholder="Придумайте пароль"
-              name="passwordVisible"
-              value={form.passwordVisible}
-              onChange={handleChange}
-              required
-            />
+            {/* Пароль с валидацией – скрытый */}
+            <div className="login-input-wrapper">
+              <input
+                type="password"
+                className={`login-input ${
+                  passwordError ? "login-input--error" : ""
+                }`}
+                placeholder="Придумайте пароль"
+                name="passwordVisible"
+                value={form.passwordVisible}
+                onChange={passwordHandler}
+                required
+              />
+              {passwordError && (
+                <div className="login-input-error">{passwordError}</div>
+              )}
+            </div>
 
             <input
               type="password"
@@ -275,9 +363,9 @@ function RegisterPage() {
             <button
               type="submit"
               className="login-submit"
-              disabled={!agree || isLoading}
+              disabled={!agree || isLoading || !formValid}
             >
-              {isLoading ? "Отправляем..." : "Зарегистрироваться"}
+              {isLoading ? "Отправляем..." : "Продолжить"}
             </button>
           </form>
         </div>

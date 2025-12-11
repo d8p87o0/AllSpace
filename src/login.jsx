@@ -49,15 +49,37 @@ function LoginPage({ onLogin }) {
       const data = await response.json();
 
       if (data.ok) {
+        // если бэкенд вернул данные пользователя — сохраняем их
+        if (data.user) {
+          const u = data.user;
+
+          const userForStorage = {
+            login: u.login,
+            firstName: u.first_name,
+            lastName: u.last_name,
+            city: u.city,
+            email: u.email,
+            status: u.status,
+          };
+
+          try {
+            localStorage.setItem("user", JSON.stringify(userForStorage));
+          } catch (e) {
+            console.error("Не удалось сохранить пользователя в localStorage:", e);
+          }
+        }
+
         // успешный вход
         if (onLogin) {
           onLogin();
         }
-        navigate("/");
+
+        // после логина отправляем в профиль
+        navigate("/profile");
       } else {
         // неверный логин или пароль
         setHasError(true);
-        setResultText("Неверный логин или пароль.");
+        setResultText(data.message || "Неверный логин или пароль.");
       }
     } catch (error) {
       console.error("Ошибка при входе:", error);
