@@ -1,12 +1,15 @@
 import { useEffect, useState, useRef } from "react";
 import { Routes, Route, useNavigate } from "react-router-dom";
-import placesData from "./places.json";
+// import placesData from "./places.json"; // больше не нужно
 import PlacePage from "./PlacePage.jsx";
 import "./App.css";
 import RegisterPage from "./register.jsx";
 import LoginPage from "./login.jsx";
 import VerifyEmailPage from "./VerifyEmailPage.jsx";
 import { ProfilePage } from "./ProfilePage.jsx";
+import AdminPage from "./Admin.jsx";
+
+const API_BASE = "http://localhost:3001";
 
 const CITIES = [
   { id: "moscow", name: "Москва", top: "47%", left: "14%" },
@@ -24,59 +27,10 @@ const CITIES = [
   { id: "chelyabinsk", name: "Челябинск", top: "71%", left: "29%" },
   { id: "novosibirsk", name: "Новосибирск", top: "82%", left: "42%" },
   { id: "krasnoyarsk", name: "Красноярск", top: "80%", left: "50%" },
-  { id: "vladivostok", name: "Владивосток", top: "85%", left: "88%" }
+  { id: "vladivostok", name: "Владивосток", top: "85%", left: "88%" },
 ];
 
 const PAGE_SIZE = 9;
-
-// --- все возможные значения по данным из places.json ---
-// тип помещения
-const ALL_PLACE_TYPES = Array.from(
-  new Set(
-    (placesData || [])
-      .map((p) => (p.type || "").trim())
-      .filter(Boolean)
-  )
-);
-
-// города
-const ALL_CITIES = Array.from(
-  new Set(
-    (placesData || [])
-      .map((p) => (p.city || "").trim())
-      .filter(Boolean)
-  )
-);
-
-// бейджи (будут использоваться как "Цены": Бесплатно / PP)
-const ALL_BADGES = Array.from(
-  new Set(
-    (placesData || [])
-      .map((p) => (p.badge || "").trim())
-      .filter(Boolean)
-  )
-);
-
-// рейтинги (строки "4.5", "4.8", ...)
-const ALL_RATINGS = Array.from(
-  new Set(
-    (placesData || [])
-      .map((p) =>
-        typeof p.rating === "number" ? p.rating.toFixed(1) : ""
-      )
-      .filter(Boolean)
-  )
-);
-
-// удобства (features – плоский список)
-const ALL_FEATURES = Array.from(
-  new Set(
-    (placesData || [])
-      .flatMap((p) => p.features || [])
-      .map((f) => (f || "").trim())
-      .filter(Boolean)
-  )
-);
 
 function shuffle(array) {
   const arr = [...array];
@@ -88,11 +42,19 @@ function shuffle(array) {
 }
 
 function App() {
+  const navigate = useNavigate();
+
   const [orderedCities, setOrderedCities] = useState([]);
   const [visibleCount, setVisibleCount] = useState(0);
 
   const [isLoggedIn, setIsLoggedIn] = useState(false);
 
+  
+  // ======= МЕСТА ИЗ API =======
+  const [places, setPlaces] = useState([]);
+  const [placesLoading, setPlacesLoading] = useState(true);
+  const [placesError, setPlacesError] = useState("");
+  
   useEffect(() => {
     try {
       const raw = localStorage.getItem("user");
@@ -102,71 +64,162 @@ function App() {
       setIsLoggedIn(false);
     }
   }, []);
-
+  
+  useEffect(() => {
+    const fetchPlaces = async () => {
+      setPlacesLoading(true);
+      setPlacesError("");
+      try {
+        const res = await fetch(`${API_BASE}/api/places`);
+        const data = await res.json();
+        if (!data.ok) {
+          throw new Error(data.message || "Не удалось загрузить места");
+        }
+        setPlaces(data.places || []);
+      } catch (e) {
+        console.error("Ошибка загрузки мест:", e);
+        setPlacesError("Не удалось загрузить места");
+      } finally {
+        setPlacesLoading(false);
+      }
+    };
+    
+    fetchPlaces();
+  }, []);
+  
+  // ======= ФИЛЬТРЫ =======
   // активный таб (подсветка)
   const [activeFilterIndex, setActiveFilterIndex] = useState(0);
   // какой фильтр сейчас открыт дропдауном (null = ничего)
   const [openFilterIndex, setOpenFilterIndex] = useState(null);
   // строка поиска внутри текущего дропдауна
   const [filterSearch, setFilterSearch] = useState("");
-
+  
   // текущая страница каталога
   const [currentPage, setCurrentPage] = useState(1);
-
-  const navigate = useNavigate();
-
+  
   const catalogRef = useRef(null);
   const shouldScrollAfterPageChange = useRef(false);
+  
+  // выбранные значения по каждому фильтру (по умолчанию пустые — "ничего не отфильтровано")
+  const [selectedTypes, setSelectedTypes] = useState([]);
+  const [selectedCities, setSelectedCities] = useState([]);
+  const [selectedBadges, setSelectedBadges] = useState([]);
+  const [selectedRatings, setSelectedRatings] = useState([]);
+  const [selectedFeatures, setSelectedFeatures] = useState([]);
+  
+  // --- все возможные значения по данным из places (из БД) ---
+  const allPlaceTypes = Array.from(
+    new Set(
+      (places || [])
+      .map((p) => (p.type || "").trim())
+      .filter(Boolean)
+    )
+  );
+  
+  const handleLogoClick = () => {
+    // полный перезапуск приложения на главной
+    window.location.href = "/";
+  };
+  
+  const allCities = Array.from(
+    new Set(
+      (places || [])
+      .map((p) => (p.city || "").trim())
+      .filter(Boolean)
+    )
+  );
 
-  // ---- выбранные значения по каждому фильтру ----
-  const [selectedTypes, setSelectedTypes] = useState(ALL_PLACE_TYPES);
-  const [selectedCities, setSelectedCities] = useState(ALL_CITIES);
-  const [selectedBadges, setSelectedBadges] = useState(ALL_BADGES);
-  const [selectedRatings, setSelectedRatings] = useState(ALL_RATINGS);
-  const [selectedFeatures, setSelectedFeatures] = useState(ALL_FEATURES);
+  const allBadges = Array.from(
+    new Set(
+      (places || [])
+        .map((p) => (p.badge || "").trim())
+        .filter(Boolean)
+    )
+  );
+
+  const allRatings = Array.from(
+    new Set(
+      (places || [])
+        .map((p) =>
+          typeof p.rating === "number" ? p.rating.toFixed(1) : ""
+        )
+        .filter(Boolean)
+    )
+  );
+
+  const allFeatures = Array.from(
+    new Set(
+      (places || [])
+        .flatMap((p) => p.features || [])
+        .map((f) => (f || "").trim())
+        .filter(Boolean)
+    )
+  );
+
+  // при первой загрузке данных из БД — включаем все опции как выбранные
+  useEffect(() => {
+    if (allPlaceTypes.length && selectedTypes.length === 0) {
+      setSelectedTypes(allPlaceTypes);
+    }
+  }, [allPlaceTypes, selectedTypes.length]);
+
+  useEffect(() => {
+    if (allCities.length && selectedCities.length === 0) {
+      setSelectedCities(allCities);
+    }
+  }, [allCities, selectedCities.length]);
+
+  useEffect(() => {
+    if (allBadges.length && selectedBadges.length === 0) {
+      setSelectedBadges(allBadges);
+    }
+  }, [allBadges, selectedBadges.length]);
+
+  useEffect(() => {
+    if (allRatings.length && selectedRatings.length === 0) {
+      setSelectedRatings(allRatings);
+    }
+  }, [allRatings, selectedRatings.length]);
+
+  useEffect(() => {
+    if (allFeatures.length && selectedFeatures.length === 0) {
+      setSelectedFeatures(allFeatures);
+    }
+  }, [allFeatures, selectedFeatures.length]);
 
   // --- функции переключения опций в дропдауне ---
   const toggleTypeOption = (type) => {
     setSelectedTypes((prev) =>
-      prev.includes(type)
-        ? prev.filter((t) => t !== type)
-        : [...prev, type]
+      prev.includes(type) ? prev.filter((t) => t !== type) : [...prev, type]
     );
     setCurrentPage(1);
   };
 
   const toggleCityOption = (city) => {
     setSelectedCities((prev) =>
-      prev.includes(city)
-        ? prev.filter((c) => c !== city)
-        : [...prev, city]
+      prev.includes(city) ? prev.filter((c) => c !== city) : [...prev, city]
     );
     setCurrentPage(1);
   };
 
   const toggleBadgeOption = (badge) => {
     setSelectedBadges((prev) =>
-      prev.includes(badge)
-        ? prev.filter((b) => b !== badge)
-        : [...prev, badge]
+      prev.includes(badge) ? prev.filter((b) => b !== badge) : [...prev, badge]
     );
     setCurrentPage(1);
   };
 
   const toggleRatingOption = (rating) => {
     setSelectedRatings((prev) =>
-      prev.includes(rating)
-        ? prev.filter((r) => r !== rating)
-        : [...prev, rating]
+      prev.includes(rating) ? prev.filter((r) => r !== rating) : [...prev, rating]
     );
     setCurrentPage(1);
   };
 
   const toggleFeatureOption = (feature) => {
     setSelectedFeatures((prev) =>
-      prev.includes(feature)
-        ? prev.filter((f) => f !== feature)
-        : [...prev, feature]
+      prev.includes(feature) ? prev.filter((f) => f !== feature) : [...prev, feature]
     );
     setCurrentPage(1);
   };
@@ -185,40 +238,40 @@ function App() {
     switch (index) {
       case 0:
         return {
-          allOptions: ALL_CITIES,
+          allOptions: allCities,
           selected: selectedCities,
           toggle: toggleCityOption,
           placeholder: "Поиск по городу",
         };
       case 1:
         return {
-          allOptions: ALL_PLACE_TYPES,
+          allOptions: allPlaceTypes,
           selected: selectedTypes,
           toggle: toggleTypeOption,
           placeholder: "Поиск по типу",
         };
       case 3:
         return {
-          allOptions: ALL_BADGES,
+          allOptions: allBadges,
           selected: selectedBadges,
           toggle: toggleBadgeOption,
           placeholder: "Поиск по ценам",
         };
       case 4:
         return {
-          allOptions: ALL_RATINGS,
+          allOptions: allRatings,
           selected: selectedRatings,
           toggle: toggleRatingOption,
           placeholder: "Поиск по рейтингу",
         };
       case 5:
         return {
-          allOptions: ALL_FEATURES,
+          allOptions: allFeatures,
           selected: selectedFeatures,
           toggle: toggleFeatureOption,
           placeholder: "Поиск по удобствам",
         };
-      // "Уровень шума" (index=2) — пока нет поля в JSON
+      // "Уровень шума" (index=2) — пока нет поля в данных
       default:
         return {
           allOptions: [],
@@ -234,25 +287,19 @@ function App() {
     opt.toLowerCase().includes(filterSearch.toLowerCase())
   );
 
-  // --- применяем фильтры к данным ---
-  const filteredPlaces = placesData.filter((place) => {
+  // --- применяем фильтры к данным из БД ---
+  const filteredPlaces = places.filter((place) => {
     // тип
-    if (
-      selectedTypes.length &&
-      !selectedTypes.includes(place.type)
-    ) {
+    if (selectedTypes.length && place.type && !selectedTypes.includes(place.type)) {
       return false;
     }
 
     // город
-    if (
-      selectedCities.length &&
-      !selectedCities.includes(place.city)
-    ) {
+    if (selectedCities.length && place.city && !selectedCities.includes(place.city)) {
       return false;
     }
 
-    // цены = badge (если есть badge и при этом выбранные бейджи заданы)
+    // цены = badge
     if (selectedBadges.length && place.badge) {
       if (!selectedBadges.includes(place.badge)) return false;
     }
@@ -266,19 +313,14 @@ function App() {
     // удобства: место должно содержать хотя бы одно выбранное удобство
     if (selectedFeatures.length) {
       const feats = place.features || [];
-      const hasAny = feats.some((f) =>
-        selectedFeatures.includes(f)
-      );
+      const hasAny = feats.some((f) => selectedFeatures.includes(f));
       if (!hasAny) return false;
     }
 
     return true;
   });
 
-  const totalPages = Math.max(
-    1,
-    Math.ceil(filteredPlaces.length / PAGE_SIZE)
-  );
+  const totalPages = Math.max(1, Math.ceil(filteredPlaces.length / PAGE_SIZE));
 
   useEffect(() => {
     setCurrentPage((prev) => Math.min(prev, totalPages));
@@ -286,10 +328,7 @@ function App() {
 
   const safeCurrentPage = Math.min(currentPage, totalPages);
   const startIndex = (safeCurrentPage - 1) * PAGE_SIZE;
-  const visiblePlaces = filteredPlaces.slice(
-    startIndex,
-    startIndex + PAGE_SIZE
-  );
+  const visiblePlaces = filteredPlaces.slice(startIndex, startIndex + PAGE_SIZE);
 
   const hasPlaces = filteredPlaces.length > 0;
 
@@ -338,7 +377,7 @@ function App() {
   const scrollToCatalog = () => {
     if (!catalogRef.current) return;
 
-    const headerOffset = 80; // подстрой под высоту шапки, если нужно
+    const headerOffset = 80;
     const rect = catalogRef.current.getBoundingClientRect();
     const absoluteTop = rect.top + window.scrollY;
     const targetTop = absoluteTop - headerOffset;
@@ -391,9 +430,7 @@ function App() {
     );
 
     if (existingScript) {
-      existingScript.addEventListener("load", () =>
-        window.ymaps.ready(initMap)
-      );
+      existingScript.addEventListener("load", () => window.ymaps.ready(initMap));
       return;
     }
 
@@ -433,15 +470,12 @@ function App() {
     setActiveFilterIndex(index);
     setFilterSearch("");
 
-    setOpenFilterIndex((prev) =>
-      prev === index ? null : index
-    );
+    setOpenFilterIndex((prev) => (prev === index ? null : index));
   };
 
   const handleFilterPrev = () => {
     setActiveFilterIndex((prev) => {
-      const next =
-        (prev - 1 + filterTabs.length) % filterTabs.length;
+      const next = (prev - 1 + filterTabs.length) % filterTabs.length;
       setOpenFilterIndex(null);
       return next;
     });
@@ -468,24 +502,13 @@ function App() {
       {/* Шапка */}
       <header className="header">
         <div className="container header__inner">
-          <div className="logo" onClick={() => navigate("/")}>
-            <img
-              src="/logo1.svg"
-              alt="SPACE logo"
-              className="logo__image"
-            />
-          </div>
+        <div className="logo" onClick={handleLogoClick}>
+          <img src="/logo1.svg" alt="SPACE logo" className="logo__image" />
+        </div>
 
-          <button
-            className="profile-btn"
-            onClick={handleProfileClick}
-          >
+          <button className="profile-btn" onClick={handleProfileClick}>
             <span className="profile-btn__icon">
-              <img
-                src="/account.svg"
-                alt="Профиль"
-                className="logo__image"
-              />
+              <img src="/account.svg" alt="Профиль" className="logo__image" />
             </span>
             <span className="profile-btn__text">Профиль</span>
           </button>
@@ -510,9 +533,8 @@ function App() {
                     </h1>
 
                     <p className="hero__subtitle">
-                      Тысячи проверенных кафе, коворкингов и
-                      библиотек с Wi-Fi, розетками и комфортной
-                      атмосферой.
+                      Тысячи проверенных кафе, коворкингов и библиотек с Wi-Fi,
+                      розетками и комфортной атмосферой.
                     </p>
                     <button className="hero__cta" onClick={scrollToCatalog}>
                       Погнали
@@ -525,15 +547,9 @@ function App() {
                   <div className="container features__grid">
                     <div className="feature-card">
                       <div className="feature-card__icon">
-                        <img
-                          src="/geo.svg"
-                          alt=""
-                          className="feature-card__icon-img"
-                        />
+                        <img src="/geo.svg" alt="" className="feature-card__icon-img" />
                       </div>
-                      <h3 className="feature-card__title">
-                        Точные адреса
-                      </h3>
+                      <h3 className="feature-card__title">Точные адреса</h3>
                       <p className="feature-card__text">
                         Все места проверены и отмечены на карте.
                       </p>
@@ -541,15 +557,9 @@ function App() {
 
                     <div className="feature-card">
                       <div className="feature-card__icon">
-                        <img
-                          src="/star.svg"
-                          alt=""
-                          className="feature-card__icon-img"
-                        />
+                        <img src="/star.svg" alt="" className="feature-card__icon-img" />
                       </div>
-                      <h3 className="feature-card__title">
-                        Честные отзывы
-                      </h3>
+                      <h3 className="feature-card__title">Честные отзывы</h3>
                       <p className="feature-card__text">
                         Реальные впечатления от посетителей.
                       </p>
@@ -563,9 +573,7 @@ function App() {
                           className="feature-card__icon-img"
                         />
                       </div>
-                      <h3 className="feature-card__title">
-                        Умные фильтры
-                      </h3>
+                      <h3 className="feature-card__title">Умные фильтры</h3>
                       <p className="feature-card__text">
                         Найди место по своим критериям.
                       </p>
@@ -580,13 +588,12 @@ function App() {
                       Находи места по всей России
                     </h2>
                     <p className="map-section__subtitle">
-                      Мы представлены во всех
-                      городах-миллионниках
+                      Мы представлены во всех городах-миллионниках
                     </p>
 
                     <div className="map-section__map-wrapper">
                       <img
-                        src="/map-russia.png"
+                        src="/map-russia-new 1.png"
                         alt="Карта России"
                         className="map-section__map-img"
                       />
@@ -597,10 +604,7 @@ function App() {
                           <div
                             key={city.id}
                             className={
-                              "city-marker" +
-                              (isVisible
-                                ? " city-marker--visible"
-                                : "")
+                              "city-marker" + (isVisible ? " city-marker--visible" : "")
                             }
                             style={{
                               top: city.top,
@@ -623,18 +627,14 @@ function App() {
                 </section>
 
                 {/* КАТАЛОГ МЕСТ */}
-                <section
-                  className="catalog"
-                  ref={catalogRef}
-                >
+                <section className="catalog" ref={catalogRef}>
                   <div className="container">
                     {/* Обёртка фильтров + дропдаун */}
                     <div className="catalog__filters-wrapper">
                       {/* Фильтры — десктоп */}
                       <div className="catalog__filters catalog__filters-desktop">
                         {filterTabs.map((label, index) => {
-                          const isActive =
-                            index === activeFilterIndex;
+                          const isActive = index === activeFilterIndex;
 
                           return (
                             <button
@@ -642,13 +642,9 @@ function App() {
                               type="button"
                               className={
                                 "catalog__filter" +
-                                (isActive
-                                  ? " catalog__filter--active"
-                                  : "")
+                                (isActive ? " catalog__filter--active" : "")
                               }
-                              onClick={() =>
-                                handleFilterTabClick(index)
-                              }
+                              onClick={() => handleFilterTabClick(index)}
                             >
                               {label}
                             </button>
@@ -673,9 +669,7 @@ function App() {
                               className="catalog__filters-mobile-label-btn"
                               onClick={() => {
                                 setOpenFilterIndex((prev) =>
-                                  prev === activeFilterIndex
-                                    ? null
-                                    : activeFilterIndex
+                                  prev === activeFilterIndex ? null : activeFilterIndex
                                 );
                               }}
                             >
@@ -699,13 +693,9 @@ function App() {
                           <input
                             type="text"
                             className="catalog-filter-dropdown__search"
-                            placeholder={
-                              currentFilterConfig.placeholder
-                            }
+                            placeholder={currentFilterConfig.placeholder}
                             value={filterSearch}
-                            onChange={(e) =>
-                              setFilterSearch(e.target.value)
-                            }
+                            onChange={(e) => setFilterSearch(e.target.value)}
                           />
 
                           <div className="catalog-filter-dropdown__list">
@@ -716,18 +706,14 @@ function App() {
                             ) : (
                               filteredOptions.map((option) => {
                                 const checked =
-                                  currentFilterConfig.selected.includes(
-                                    option
-                                  );
+                                  currentFilterConfig.selected.includes(option);
                                 return (
                                   <button
                                     key={option}
                                     type="button"
                                     className="catalog-filter-dropdown__item"
                                     onClick={() =>
-                                      currentFilterConfig.toggle(
-                                        option
-                                      )
+                                      currentFilterConfig.toggle(option)
                                     }
                                   >
                                     <span
@@ -750,15 +736,23 @@ function App() {
                       )}
                     </div>
 
+                    {/* Сообщения про загрузку / ошибку */}
+                    {placesLoading && !places.length && (
+                      <p className="admin__hint">Загружаем места...</p>
+                    )}
+                    {placesError && (
+                      <p className="admin__alert admin__alert--error">
+                        {placesError}
+                      </p>
+                    )}
+
                     {/* Сетка карточек */}
                     <div className="catalog__grid">
                       {visiblePlaces.map((place) => (
                         <article
                           key={place.id}
                           className="place-card"
-                          onClick={() =>
-                            navigate(`/place/${place.id}`)
-                          }
+                          onClick={() => navigate(`/place/${place.id}`)}
                         >
                           <div className="place-card__image-wrapper">
                             <img
@@ -784,17 +778,19 @@ function App() {
                                 </p>
                               </div>
 
-                              <div className="place-card__rating">
-                                <span className="place-card__rating-icon">
-                                  ★
-                                </span>
-                                <span className="place-card__rating-value">
-                                  {place.rating.toFixed(1)}
-                                </span>
-                                <span className="place-card__rating-count">
-                                  ({place.reviews})
-                                </span>
-                              </div>
+                              {typeof place.rating === "number" && (
+                                <div className="place-card__rating">
+                                  <span className="place-card__rating-icon">
+                                    ★
+                                  </span>
+                                  <span className="place-card__rating-value">
+                                    {place.rating.toFixed(1)}
+                                  </span>
+                                  <span className="place-card__rating-count">
+                                    ({place.reviews ?? 0})
+                                  </span>
+                                </div>
+                              )}
                             </div>
 
                             <div className="place-card__location">
@@ -809,7 +805,7 @@ function App() {
                             </div>
 
                             <div className="place-card__tags">
-                              {place.features.map((feature) => (
+                              {(place.features || []).map((feature) => (
                                 <span
                                   key={feature}
                                   className="place-card__tag"
@@ -829,37 +825,30 @@ function App() {
                         type="button"
                         className="catalog__pagination-btn"
                         onClick={handlePrev}
-                        disabled={
-                          safeCurrentPage === 1 || !hasPlaces
-                        }
+                        disabled={safeCurrentPage === 1 || !hasPlaces}
                       >
                         ←Назад
                       </button>
 
                       <div className="catalog__pagination-pages">
-                        {Array.from(
-                          { length: totalPages },
-                          (_, index) => {
-                            const page = index + 1;
-                            return (
-                              <button
-                                key={page}
-                                type="button"
-                                className={
-                                  "catalog__page-btn" +
-                                  (page === safeCurrentPage
-                                    ? " catalog__page-btn--active"
-                                    : "")
-                                }
-                                onClick={() =>
-                                  handlePageClick(page)
-                                }
-                              >
-                                {page}
-                              </button>
-                            );
-                          }
-                        )}
+                        {Array.from({ length: totalPages }, (_, index) => {
+                          const page = index + 1;
+                          return (
+                            <button
+                              key={page}
+                              type="button"
+                              className={
+                                "catalog__page-btn" +
+                                (page === safeCurrentPage
+                                  ? " catalog__page-btn--active"
+                                  : "")
+                              }
+                              onClick={() => handlePageClick(page)}
+                            >
+                              {page}
+                            </button>
+                          );
+                        })}
                       </div>
 
                       <div className="catalog__pagination-current-mobile">
@@ -870,10 +859,7 @@ function App() {
                         type="button"
                         className="catalog__pagination-btn"
                         onClick={handleNext}
-                        disabled={
-                          safeCurrentPage === totalPages ||
-                          !hasPlaces
-                        }
+                        disabled={safeCurrentPage === totalPages || !hasPlaces}
                       >
                         Далее→
                       </button>
@@ -889,10 +875,7 @@ function App() {
                     </h2>
 
                     <div className="route-map__map-wrapper">
-                      <div
-                        id="yandex-map"
-                        className="route-map__map"
-                      />
+                      <div id="yandex-map" className="route-map__map" />
                     </div>
                   </div>
                 </section>
@@ -904,8 +887,8 @@ function App() {
                       Знаешь отличное место?
                     </h2>
                     <p className="footer-cta__subtitle">
-                      Поделись с сообществом и помоги другим найти
-                      идеальное пространство для работы
+                      Поделись с сообществом и помоги другим найти идеальное
+                      пространство для работы
                     </p>
                     <button
                       className="footer-cta__btn"
@@ -927,7 +910,11 @@ function App() {
             path="/login"
             element={<LoginPage onLogin={() => setIsLoggedIn(true)} />}
           />
-          <Route path="/profile" element={<ProfilePage />} />
+          <Route
+            path="/profile"
+            element={<ProfilePage onLogout={() => setIsLoggedIn(false)} />}
+          />
+          <Route path="/admin" element={<AdminPage />} />
         </Routes>
       </main>
 
@@ -936,20 +923,13 @@ function App() {
         <div className="container footer__inner">
           <div className="footer__brand">
             <div className="footer__logo-circle">
-              <img
-                src="/geo.svg"
-                alt=""
-                className="footer__logo-icon"
-              />
+              <img src="/geo.svg" alt="" className="footer__logo-icon" />
             </div>
-            <span className="footer__brand-name">
-              ALLSPACE
-            </span>
+            <span className="footer__brand-name">ALLSPACE</span>
           </div>
 
           <div className="footer__copy">
-            © {new Date().getFullYear()} ALLSPACE. Все права
-            защищены.
+            © {new Date().getFullYear()} ALLSPACE. Все права защищены.
           </div>
         </div>
       </footer>

@@ -6,7 +6,7 @@ import "./App.css";
 
 const FAVORITES_KEY = "favoritePlaces"; // массив id мест в localStorage
 
-export function ProfilePage() {
+export function ProfilePage({ onLogout }) {
   const navigate = useNavigate();
 
   const [user, setUser] = useState(null);
@@ -38,6 +38,24 @@ export function ProfilePage() {
       console.error("Не удалось прочитать избранное:", e);
     }
   }, []);
+
+  const handleLogout = () => {
+    // чистим localStorage
+    try {
+      localStorage.removeItem("user");
+      localStorage.removeItem(FAVORITES_KEY);
+    } catch (e) {
+      console.error("Не удалось очистить localStorage при выходе:", e);
+    }
+
+    // сбрасываем флаг авторизации в App.jsx
+    if (typeof onLogout === "function") {
+      onLogout();
+    }
+
+    // отправляем на страницу логина
+    navigate("/login");
+  };
 
   // если юзер не найден — просим залогиниться
   if (!user) {
@@ -176,6 +194,15 @@ export function ProfilePage() {
             </div>
           )}
         </div>
+
+        {/* 🔴 Кнопка выхода в самом низу */}
+        <button
+          type="button"
+          className="profile__logout-btn"
+          onClick={handleLogout}
+        >
+          Выйти
+        </button>
       </div>
     </section>
   );

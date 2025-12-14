@@ -1,9 +1,10 @@
 // src/PlacePage.jsx
 import { useEffect, useState } from "react";
 import { useParams } from "react-router-dom";
-import placesData from "./places.json";
 import reviewsData from "./reviews.json";
 import usersData from "./users.json";
+
+const API_BASE = "http://localhost:3001";
 
 // Доп. описание и особенности для мест
 const PLACE_DETAILS = {
@@ -13,7 +14,7 @@ const PLACE_DETAILS = {
     wifi: "100 Мбит/с, стабильное подключение",
     noise: "Тихо · 4.5/5",
     sockets: "Розетки у каждого столика",
-    avgCheck: "300–500 ₽"
+    avgCheck: "300–500 ₽",
   },
   default: {
     description:
@@ -21,8 +22,8 @@ const PLACE_DETAILS = {
     wifi: "Быстрый Wi-Fi",
     noise: "Средний уровень шума",
     sockets: "Розетки в зале",
-    avgCheck: "Средний чек 300–700 ₽"
-  }
+    avgCheck: "Средний чек 300–700 ₽",
+  },
 };
 
 function getInitials(name) {
@@ -55,12 +56,15 @@ export default function PlacePage() {
   const { id } = useParams();
   const placeId = Number(id);
 
-  const place = placesData.find((p) => p.id === placeId);
+  const [place, setPlace] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState("");
 
   const [activeIndex, setActiveIndex] = useState(0);
   const [isLightboxOpen, setIsLightboxOpen] = useState(false);
   const [isFavorite, setIsFavorite] = useState(false);
 
+  // сброс UI при смене id
   useEffect(() => {
     window.scrollTo(0, 0);
     setActiveIndex(0);
@@ -68,11 +72,70 @@ export default function PlacePage() {
     setIsFavorite(false);
   }, [placeId]);
 
+  // грузим место из API
+  useEffect(() => {
+    let cancelled = false;
+
+    const loadPlace = async () => {
+      if (!Number.isFinite(placeId)) {
+        setPlace(null);
+        setLoading(false);
+        setLoadError("Некорректный идентификатор места");
+        return;
+      }
+
+      setLoading(true);
+      setLoadError("");
+      try {
+        const res = await fetch(`${API_BASE}/api/places`);
+        const data = await res.json();
+
+        if (!data.ok) {
+          throw new Error(data.message || "Не удалось загрузить место");
+        }
+
+        const found = (data.places || []).find((p) => p.id === placeId);
+        if (!cancelled) {
+          setPlace(found || null);
+          if (!found) {
+            setLoadError("Место не найдено");
+          }
+        }
+      } catch (e) {
+        console.error("Ошибка загрузки места:", e);
+        if (!cancelled) {
+          setPlace(null);
+          setLoadError("Ошибка загрузки места");
+        }
+      } finally {
+        if (!cancelled) {
+          setLoading(false);
+        }
+      }
+    };
+
+    loadPlace();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [placeId]);
+
+  if (loading) {
+    return (
+      <section className="place-page">
+        <div className="container place-page__inner">
+          <p>Загружаем место...</p>
+        </div>
+      </section>
+    );
+  }
+
   if (!place) {
     return (
       <section className="place-page">
         <div className="container place-page__inner">
-          <p>Место не найдено.</p>
+          <p>{loadError || "Место не найдено."}</p>
         </div>
       </section>
     );
@@ -123,6 +186,10 @@ export default function PlacePage() {
     setIsFavorite((prev) => !prev);
   };
 
+  const hasRating = typeof place.rating === "number";
+  const ratingValue = hasRating ? place.rating.toFixed(1) : "—";
+  const reviewsCount = place.reviews ?? 0;
+
   return (
     <>
       <section className="place-page">
@@ -169,24 +236,34 @@ export default function PlacePage() {
               {/* Заголовок и описание */}
               <div className="place-page__header">
                 <div className="place-page__chips-row">
-                  <span className="place-page__chip">{place.type}</span>
+                  {place.type && (
+                    <span className="place-page__chip">{place.type}</span>
+                  )}
+                  {place.badge && (
+                    <span className="place-page__chip place-page__chip--badge">
+                      {place.badge}
+                    </span>
+                  )}
                 </div>
 
                 <h1 className="place-page__title">{place.name}</h1>
 
                 <div className="place-page__meta">
-                  <span className="place-page__rating-main">
-                    <span className="place-page__rating-star">★</span>
-                    {place.rating.toFixed(1)}
-                    <span className="place-page__rating-count">
-                      &nbsp;({place.reviews} отзывов)
-                    </span>
-                  </span>
-
-                  <span className="place-page__dot">•</span>
+                  {hasRating && (
+                    <>
+                      <span className="place-page__rating-main">
+                        <span className="place-page__rating-star">★</span>
+                        {ratingValue}
+                        <span className="place-page__rating-count">
+                          &nbsp;({reviewsCount} отзывов)
+                        </span>
+                      </span>
+                      <span className="place-page__dot">•</span>
+                    </>
+                  )}
 
                   <span className="place-page__address">
-                    {place.city}, {place.address}
+                    {place.city && `${place.city}, `}{place.address}
                   </span>
                 </div>
 
@@ -345,7 +422,8 @@ export default function PlacePage() {
               <div className="place-sidecard">
                 <h3 className="place-sidecard__title">Адрес</h3>
                 <p className="place-sidecard__address">
-                  {place.address}, {place.city}
+                  {place.address}
+                  {place.city ? `, ${place.city}` : ""}
                 </p>
 
                 <div className="place-sidecard__map">

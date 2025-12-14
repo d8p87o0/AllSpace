@@ -3,6 +3,9 @@ import express from "express";
 import cors from "cors";
 import db from "./db.js";
 import { suggestCities, cityExists } from "./cities.js";
+import fs from "fs";
+import path from "path";
+import { fileURLToPath } from "url";
 
 import nodemailer from "nodemailer";
 import dotenv from "dotenv";
@@ -19,18 +22,108 @@ app.use(
 );
 app.use(express.json());
 
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+
+// ===================== PLACES: таблица и начальное наполнение =====================
+
+// создаём таблицу places, если её ещё нет
+db.serialize(() => {
+  db.run(`
+    CREATE TABLE IF NOT EXISTS places (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      name TEXT NOT NULL,
+      type TEXT,
+      city TEXT,
+      address TEXT,
+      image TEXT,
+      badge TEXT,
+      rating REAL,
+      reviews INTEGER,
+      features TEXT, -- JSON-строка с массивом фич
+      link TEXT
+    )
+  `);
+
+  // Путь к places.json (если структура проекта: /server/server.js и /src/places.json)
+  const placesJsonPath = path.join(__dirname, "../src/places.json");
+
+  // Один раз перенесём данные из places.json в БД, если таблица пустая
+  db.get("SELECT COUNT(*) AS cnt FROM places", (err, row) => {
+    if (err) {
+      console.error("Ошибка подсчёта places:", err);
+      return;
+    }
+
+    if (row && row.cnt === 0 && fs.existsSync(placesJsonPath)) {
+      console.log("Таблица places пуста, импортируем данные из places.json...");
+      try {
+        const raw = fs.readFileSync(placesJsonPath, "utf8");
+        const placesFromJson = JSON.parse(raw);
+
+        const insertSql = `
+          INSERT INTO places
+            (id, name, type, city, address, image, badge, rating, reviews, features, link)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        `;
+
+        const stmt = db.prepare(insertSql);
+
+        for (const p of placesFromJson) {
+          const featuresJson = JSON.stringify(p.features || []);
+          stmt.run(
+            p.id || null,
+            p.name || "",
+            p.type || null,
+            p.city || null,
+            p.address || null,
+            p.image || null,
+            p.badge || null,
+            typeof p.rating === "number" ? p.rating : null,
+            typeof p.reviews === "number" ? p.reviews : null,
+            featuresJson,
+            p.link || null
+          );
+        }
+
+        stmt.finalize();
+        console.log("Импорт places.json в БД завершён.");
+      } catch (e) {
+        console.error("Ошибка импорта places.json:", e);
+      }
+    }
+  });
+});
+
+// хелпер для преобразования строки features в массив
+function mapPlaceRow(row) {
+  let features = [];
+  try {
+    features = row.features ? JSON.parse(row.features) : [];
+  } catch (e) {
+    features = [];
+  }
+  return {
+    id: row.id,
+    name: row.name,
+    type: row.type,
+    city: row.city,
+    address: row.address,
+    image: row.image,
+    badge: row.badge,
+    rating: row.rating,
+    reviews: row.reviews,
+    features,
+    link: row.link,
+  };
+}
+
 // ===================== SMTP НАСТРОЙКА =====================
-// НУЖНЫ переменные в .env:
-// SMTP_HOST=smtp.вашейпочты.com
-// SMTP_PORT=465 (или 587)
-// SMTP_USER=your_email@example.com
-// SMTP_PASS=пароль_приложения
-// FROM_EMAIL=your_email@example.com (можно не указывать, тогда возьмется SMTP_USER)
 
 const transporter = nodemailer.createTransport({
   host: process.env.SMTP_HOST,
   port: Number(process.env.SMTP_PORT) || 465,
-  secure: true, // true для 465; если используешь 587, можно secure: false + tls
+  secure: true,
   auth: {
     user: process.env.SMTP_USER,
     pass: process.env.SMTP_PASS,
@@ -39,11 +132,9 @@ const transporter = nodemailer.createTransport({
 
 // временное хранилище незавершённых регистраций (для dev)
 const pendingRegistrations = new Map();
-// key: email
-// value: { code, userData: {login, password, ...}, expiresAt }
 
-// ===================== ЛОГИН (как было) =====================
-// ===================== ЛОГИН (обновлённый) =====================
+// ===================== ЛОГИН =====================
+
 app.post("/api/login", (req, res) => {
   const { login, password } = req.body;
 
@@ -54,7 +145,6 @@ app.post("/api/login", (req, res) => {
     });
   }
 
-  // забираем только нужные поля, пароль в ответ не отдаём
   const sql = `
     SELECT
       login,
@@ -76,7 +166,6 @@ app.post("/api/login", (req, res) => {
       });
     }
 
-    // пользователь не найден
     if (!row) {
       return res.json({
         ok: false,
@@ -84,7 +173,6 @@ app.post("/api/login", (req, res) => {
       });
     }
 
-    // формируем объект user для фронта
     const user = {
       login: row.login,
       first_name: row.first_name,
@@ -103,18 +191,9 @@ app.post("/api/login", (req, res) => {
 });
 
 // ===================== РЕГИСТРАЦИЯ: ШАГ 1 =====================
-// /api/register/start — проверяем данные, город, логин, генерим код, шлём на почту
 
 app.post("/api/register/start", (req, res) => {
-  const {
-    login,
-    password,
-    firstName,
-    lastName,
-    city,
-    email,
-    status,
-  } = req.body;
+  const { login, password, firstName, lastName, city, email, status } = req.body;
 
   if (!login || !password) {
     return res.status(400).json({
@@ -130,7 +209,6 @@ app.post("/api/register/start", (req, res) => {
     });
   }
 
-  // 🔎 Проверяем город по справочнику
   if (!cityExists(city)) {
     return res.json({
       ok: false,
@@ -138,7 +216,6 @@ app.post("/api/register/start", (req, res) => {
     });
   }
 
-  // Проверяем, что логин ещё не занят
   db.get("SELECT id FROM users WHERE login = ?", [login], (err, row) => {
     if (err) {
       console.error("DB error (check login):", err);
@@ -155,9 +232,8 @@ app.post("/api/register/start", (req, res) => {
       });
     }
 
-    // логин свободен, город ок — генерим 6-значный код
     const code = Math.floor(100000 + Math.random() * 900000).toString();
-    const expiresAt = Date.now() + 15 * 60 * 1000; // 15 минут
+    const expiresAt = Date.now() + 15 * 60 * 1000;
 
     const userData = {
       login,
@@ -169,14 +245,12 @@ app.post("/api/register/start", (req, res) => {
       status,
     };
 
-    // сохраняем в pendingRegistrations
     pendingRegistrations.set(email, {
       code,
       userData,
       expiresAt,
     });
 
-    // отправляем письмо
     const fromEmail = process.env.FROM_EMAIL || process.env.SMTP_USER;
 
     transporter.sendMail(
@@ -203,7 +277,6 @@ app.post("/api/register/start", (req, res) => {
 });
 
 // ===================== РЕГИСТРАЦИЯ: ШАГ 2 =====================
-// /api/register/verify — проверяем код, если ок — создаём пользователя в БД
 
 app.post("/api/register/verify", (req, res) => {
   const { email, code } = req.body;
@@ -238,16 +311,8 @@ app.post("/api/register/verify", (req, res) => {
     });
   }
 
-  const {
-    login,
-    password,
-    firstName,
-    lastName,
-    city,
-    status,
-  } = record.userData;
+  const { login, password, firstName, lastName, city, status } = record.userData;
 
-  // На всякий случай ещё раз проверим логин
   db.get("SELECT id FROM users WHERE login = ?", [login], (err, row) => {
     if (err) {
       console.error("DB error (check login on verify):", err);
@@ -258,8 +323,6 @@ app.post("/api/register/verify", (req, res) => {
     }
 
     if (row) {
-      // теоретически сюда попадём, если пока человек вводил код,
-      // кто-то уже занял логин
       return res.json({
         ok: false,
         message: "Пользователь с таким логином уже существует",
@@ -284,7 +347,6 @@ app.post("/api/register/verify", (req, res) => {
           });
         }
 
-        // удаляем запись из pendingRegistrations — регистрация завершена
         pendingRegistrations.delete(email);
 
         return res.json({
@@ -296,7 +358,7 @@ app.post("/api/register/verify", (req, res) => {
   });
 });
 
-// ===================== ПОДСКАЗКИ ГОРОДОВ (как было) =====================
+// ===================== ПОДСКАЗКИ ГОРОДОВ =====================
 
 app.get("/api/cities", (req, res) => {
   const q = req.query.q || "";
@@ -304,6 +366,193 @@ app.get("/api/cities", (req, res) => {
   res.json({
     ok: true,
     suggestions,
+  });
+});
+
+// ===================== PLACES API для админки =====================
+
+// Получить все места
+app.get("/api/places", (req, res) => {
+  db.all("SELECT * FROM places ORDER BY id ASC", (err, rows) => {
+    if (err) {
+      console.error("DB error (get places):", err);
+      return res.status(500).json({
+        ok: false,
+        message: "Ошибка сервера при получении мест",
+      });
+    }
+
+    const places = (rows || []).map(mapPlaceRow);
+    res.json({ ok: true, places });
+  });
+});
+
+// Добавить место
+app.post("/api/places", (req, res) => {
+  const { name, type, city, address, image, badge, rating, reviews, features, link } =
+    req.body;
+
+  if (!name || !name.trim()) {
+    return res.json({
+      ok: false,
+      message: "Название обязательно",
+    });
+  }
+
+  const featuresJson = JSON.stringify(Array.isArray(features) ? features : []);
+
+  const sql = `
+    INSERT INTO places
+      (name, type, city, address, image, badge, rating, reviews, features, link)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `;
+
+  db.run(
+    sql,
+    [
+      name.trim(),
+      (type || null),
+      (city || null),
+      (address || null),
+      (image || null),
+      (badge || null),
+      rating ?? null,
+      reviews ?? null,
+      featuresJson,
+      (link || null),
+    ],
+    function (err) {
+      if (err) {
+        console.error("DB error (insert place):", err);
+        return res.status(500).json({
+          ok: false,
+          message: "Ошибка сервера при добавлении места",
+        });
+      }
+
+      const newId = this.lastID;
+      db.get("SELECT * FROM places WHERE id = ?", [newId], (err2, row) => {
+        if (err2 || !row) {
+          return res.json({ ok: true }); // добавили, но не смогли вернуть
+        }
+        res.json({
+          ok: true,
+          place: mapPlaceRow(row),
+        });
+      });
+    }
+  );
+});
+
+// Обновить место
+app.put("/api/places/:id", (req, res) => {
+  const id = Number(req.params.id);
+  if (!Number.isInteger(id)) {
+    return res.json({
+      ok: false,
+      message: "Некорректный id",
+    });
+  }
+
+  const { name, type, city, address, image, badge, rating, reviews, features, link } =
+    req.body;
+
+  if (!name || !name.trim()) {
+    return res.json({
+      ok: false,
+      message: "Название обязательно",
+    });
+  }
+
+  const featuresJson = JSON.stringify(Array.isArray(features) ? features : []);
+
+  const sql = `
+    UPDATE places
+    SET
+      name = ?,
+      type = ?,
+      city = ?,
+      address = ?,
+      image = ?,
+      badge = ?,
+      rating = ?,
+      reviews = ?,
+      features = ?,
+      link = ?
+    WHERE id = ?
+  `;
+
+  db.run(
+    sql,
+    [
+      name.trim(),
+      (type || null),
+      (city || null),
+      (address || null),
+      (image || null),
+      (badge || null),
+      rating ?? null,
+      reviews ?? null,
+      featuresJson,
+      (link || null),
+      id,
+    ],
+    function (err) {
+      if (err) {
+        console.error("DB error (update place):", err);
+        return res.status(500).json({
+          ok: false,
+          message: "Ошибка сервера при обновлении места",
+        });
+      }
+
+      if (this.changes === 0) {
+        return res.json({
+          ok: false,
+          message: "Место не найдено",
+        });
+      }
+
+      db.get("SELECT * FROM places WHERE id = ?", [id], (err2, row) => {
+        if (err2 || !row) {
+          return res.json({ ok: true });
+        }
+        res.json({
+          ok: true,
+          place: mapPlaceRow(row),
+        });
+      });
+    }
+  );
+});
+
+// Удалить место
+app.delete("/api/places/:id", (req, res) => {
+  const id = Number(req.params.id);
+  if (!Number.isInteger(id)) {
+    return res.json({
+      ok: false,
+      message: "Некорректный id",
+    });
+  }
+
+  db.run("DELETE FROM places WHERE id = ?", [id], function (err) {
+    if (err) {
+      console.error("DB error (delete place):", err);
+      return res.status(500).json({
+        ok: false,
+        message: "Ошибка сервера при удалении места",
+      });
+    }
+
+    if (this.changes === 0) {
+      return res.json({
+        ok: false,
+        message: "Место не найдено",
+      });
+    }
+
+    res.json({ ok: true });
   });
 });
 

@@ -49,9 +49,12 @@ function LoginPage({ onLogin }) {
       const data = await response.json();
 
       if (data.ok) {
+        let loginName = form.login;
+
         // если бэкенд вернул данные пользователя — сохраняем их
         if (data.user) {
           const u = data.user;
+          loginName = u.login || form.login;
 
           const userForStorage = {
             login: u.login,
@@ -74,8 +77,12 @@ function LoginPage({ onLogin }) {
           onLogin();
         }
 
-        // после логина отправляем в профиль
-        navigate("/profile");
+        // если это админ — в админку, иначе в профиль
+        if (loginName === "admin") {
+          navigate("/admin");
+        } else {
+          navigate("/profile");
+        }
       } else {
         // неверный логин или пароль
         setHasError(true);
