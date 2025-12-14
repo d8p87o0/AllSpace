@@ -1,11 +1,11 @@
 // src/PlacePage.jsx
 import { useEffect, useState } from "react";
-import { useParams } from "react-router-dom";
+import { useParams, useNavigate } from "react-router-dom";
 import reviewsData from "./reviews.json";
 import usersData from "./users.json";
 
 const API_BASE = "http://localhost:3001";
-
+const FAVORITES_PREFIX = "favoritePlaces_";
 // Доп. описание и особенности для мест
 const PLACE_DETAILS = {
   1: {
@@ -54,8 +54,10 @@ function buildGalleryImages(src) {
 
 export default function PlacePage() {
   const { id } = useParams();
+  const navigate = useNavigate();
   const placeId = Number(id);
 
+  const [user, setUser] = useState(null);
   const [place, setPlace] = useState(null);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState("");
@@ -64,13 +66,49 @@ export default function PlacePage() {
   const [isLightboxOpen, setIsLightboxOpen] = useState(false);
   const [isFavorite, setIsFavorite] = useState(false);
 
+  const getFavoritesKey = (login) => `${FAVORITES_PREFIX}${login}`;
+
   // сброс UI при смене id
   useEffect(() => {
     window.scrollTo(0, 0);
     setActiveIndex(0);
     setIsLightboxOpen(false);
-    setIsFavorite(false);
+    // isFavorite управляется отдельным эффектом
   }, [placeId]);
+
+  useEffect(() => {
+    if (!user || !user.login || !Number.isFinite(placeId)) {
+      setIsFavorite(false);
+      return;
+    }
+
+    try {
+      const key = getFavoritesKey(user.login);
+      const raw = localStorage.getItem(key);
+      const ids = raw ? JSON.parse(raw) : [];
+      const normalizedIds = Array.isArray(ids) ? ids.map(Number) : [];
+
+      setIsFavorite(normalizedIds.includes(placeId));
+    } catch (e) {
+      console.error("Не удалось прочитать избранное:", e);
+      setIsFavorite(false);
+    }
+  }, [user, placeId]);
+
+  // читаем текущего пользователя из localStorage
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem("user");
+      if (raw) {
+        setUser(JSON.parse(raw));
+      } else {
+        setUser(null);
+      }
+    } catch (e) {
+      console.error("Не удалось прочитать user из localStorage:", e);
+      setUser(null);
+    }
+  }, []);
 
   // грузим место из API
   useEffect(() => {
@@ -183,7 +221,43 @@ export default function PlacePage() {
   };
 
   const toggleFavorite = () => {
-    setIsFavorite((prev) => !prev);
+    // если не авторизован — шлём на логин
+    if (!user) {
+      navigate("/login");
+      return;
+    }
+
+    // админ не может добавлять избранное
+    if (user.login === "admin") {
+      alert("Администратор не может добавлять места в избранное.");
+      return;
+    }
+
+    const key = getFavoritesKey(user.login);
+
+    try {
+      const raw = localStorage.getItem(key);
+      const ids = raw ? JSON.parse(raw) : [];
+      const normalizedIds = Array.isArray(ids) ? ids.map(Number) : [];
+
+      let nextIds;
+      let nextIsFavorite;
+
+      if (normalizedIds.includes(placeId)) {
+        // уже было в избранном — удаляем
+        nextIds = normalizedIds.filter((id) => id !== placeId);
+        nextIsFavorite = false;
+      } else {
+        // добавляем в избранное
+        nextIds = [...normalizedIds, placeId];
+        nextIsFavorite = true;
+      }
+
+      localStorage.setItem(key, JSON.stringify(nextIds));
+      setIsFavorite(nextIsFavorite);
+    } catch (e) {
+      console.error("Не удалось обновить избранное:", e);
+    }
   };
 
   const hasRating = typeof place.rating === "number";
