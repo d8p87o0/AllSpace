@@ -2129,7 +2129,32 @@
   }
 }
 
+.admin__header-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
 
+.admin__logout-btn {
+  padding: 10px 16px;
+  border-radius: 999px;
+  border: none;
+  background-color: #e53935; /* красная кнопка */
+  color: #fff;
+  font-size: 14px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background-color 0.2s ease, transform 0.05s ease;
+}
+
+.admin__logout-btn:hover {
+  background-color: #c62828;
+  transform: translateY(-1px);
+}
+
+.admin__logout-btn:active {
+  transform: translateY(0);
+}
 
 /* ===== Админка ===== */
 
@@ -2144,6 +2169,7 @@
 }
 
 .admin__header {
+  padding-top: 25px;
   display: flex;
   justify-content: space-between;
   align-items: center;

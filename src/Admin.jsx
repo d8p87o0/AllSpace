@@ -26,6 +26,17 @@ export default function AdminPage() {
     window.location.href = "/";
   };
 
+
+  const handleLogout = () => {
+    try {
+      localStorage.removeItem("user");
+    } catch (e) {
+      console.error("Ошибка очистки user из localStorage:", e);
+    }
+    // После логаута отправляем на страницу логина
+    navigate("/login");
+  };
+
   const [user, setUser] = useState(null);
   const [places, setPlaces] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -250,13 +261,23 @@ export default function AdminPage() {
             </p>
           </div>
 
-          <button
-            type="button"
-            className="admin__back-btn"
-            onClick={goToSite}
+          <div className="admin__header-actions">
+            <button
+              type="button"
+              className="admin__back-btn"
+              onClick={() => navigate("/")}
             >
-            На сайт
-          </button>
+              На сайт
+            </button>
+
+            <button
+              type="button"
+              className="admin__logout-btn"
+              onClick={handleLogout}
+            >
+              Выйти
+            </button>
+          </div>
         </div>
 
         {error && <div className="admin__alert admin__alert--error">{error}</div>}

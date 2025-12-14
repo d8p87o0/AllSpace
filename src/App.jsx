@@ -490,10 +490,26 @@ function App() {
   };
 
   const handleProfileClick = () => {
-    if (!isLoggedIn) {
+    try {
+      const raw = localStorage.getItem("user");
+
+      // Если пользователь не залогинен — отправляем на логин
+      if (!raw) {
+        navigate("/login");
+        return;
+      }
+
+      const u = JSON.parse(raw);
+
+      // Если это админ — всегда ведём в /admin
+      if (u.login === "admin") {
+        navigate("/admin");
+      } else {
+        navigate("/profile");
+      }
+    } catch (e) {
+      console.error("Не удалось прочитать user из localStorage:", e);
       navigate("/login");
-    } else {
-      navigate("/profile");
     }
   };
 
