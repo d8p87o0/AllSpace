@@ -15,6 +15,11 @@ dotenv.config();
 const app = express();
 const PORT = 3001;
 
+
+
+
+
+
 app.use(
   cors({
     origin: "http://localhost:5173",
@@ -24,6 +29,72 @@ app.use(express.json());
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
+
+// Работа с фото
+const photosRoot = path.join(__dirname, "photos");
+
+function normalizeKey(str = "") {
+  return str
+    .toLowerCase()
+    .replace(/[ъ']/g, "ь")
+    .replace(/ё/g, "е")
+    .replace(/[^a-zа-я0-9]+/gi, "");
+}
+
+function extractFolderFromImage(imageUrl = "") {
+  const marker = "/photos/";
+  const idx = imageUrl.indexOf(marker);
+  if (idx === -1) return null;
+  const raw = imageUrl.slice(idx + marker.length).split("/")[0];
+  try {
+    return decodeURIComponent(raw);
+  } catch {
+    return raw;
+  }
+}
+
+function findFolderByName(name = "") {
+  if (!fs.existsSync(photosRoot)) return null;
+  const target = normalizeKey(name);
+  return (
+    fs
+      .readdirSync(photosRoot, { withFileTypes: true })
+      .filter((d) => d.isDirectory())
+      .map((d) => d.name)
+      .find((dir) => {
+        const norm = normalizeKey(dir);
+        return norm === target || norm.includes(target) || target.includes(norm);
+      }) || null
+  );
+}
+
+function listPhotos(folder, req) {
+  if (!folder) return [];
+  const folderPath = path.join(photosRoot, folder);
+  if (!fs.existsSync(folderPath)) return [];
+  const host = `${req.protocol}://${req.get("host")}`;
+  return fs
+    .readdirSync(folderPath, { withFileTypes: true })
+    .filter((f) => f.isFile())
+    .map((f) => f.name)
+    .filter((f) => /\.(jpe?g|png|webp)$/i.test(f))
+    .sort((a, b) => a.localeCompare(b, "ru"))
+    .map(
+      (f) =>
+        `${host}/photos/${encodeURIComponent(folder)}/${encodeURIComponent(f)}`
+    );
+}
+
+function collectPlacePhotos(place, req) {
+  const folder =
+    extractFolderFromImage(place?.image || "") ||
+    findFolderByName(place?.name || "");
+  const photos = listPhotos(folder, req);
+  return { photos, cover: photos[0] || place?.image || null };
+}
+
+// ✅ статическая раздача фото
+app.use("/photos", express.static(path.join(__dirname, "photos")));
 
 // ===================== PLACES: таблица и начальное наполнение =====================
 
@@ -553,6 +624,28 @@ app.delete("/api/places/:id", (req, res) => {
     }
 
     res.json({ ok: true });
+  });
+});
+
+// Фотографии места
+app.get("/api/places/:id/photos", (req, res) => {
+  const id = Number(req.params.id);
+  if (!Number.isInteger(id)) {
+    return res.status(400).json({ ok: false, message: "Некорректный id" });
+  }
+
+  db.get("SELECT * FROM places WHERE id = ?", [id], (err, row) => {
+    if (err) {
+      console.error("DB error (place photos):", err);
+      return res.status(500).json({ ok: false, message: "DB error" });
+    }
+    if (!row) {
+      return res.status(404).json({ ok: false, message: "Место не найдено" });
+    }
+
+    const place = mapPlaceRow(row);
+    const { photos, cover } = collectPlacePhotos(place, req);
+    return res.json({ ok: true, photos, cover });
   });
 });
 

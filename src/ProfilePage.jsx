@@ -1,10 +1,12 @@
-// ProfilePage.jsx
 import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import placesData from "./places.json";
 import "./App.css";
 
-const FAVORITES_KEY = "favoritePlaces"; // массив id мест в localStorage
+const API_BASE = "http://localhost:3001";
+const FAVORITES_PREFIX = "favoritePlaces_";
+
+const getFavoritesKey = (login) => `${FAVORITES_PREFIX}${login}`;
 
 export function ProfilePage({ onLogout }) {
   const navigate = useNavigate();
@@ -13,47 +15,87 @@ export function ProfilePage({ onLogout }) {
   const [favoritePlaces, setFavoritePlaces] = useState([]);
 
   useEffect(() => {
-    // грузим пользователя
+    let currentUser = null;
+
+    // 1) грузим пользователя
     try {
       const raw = localStorage.getItem("user");
       if (raw) {
-        setUser(JSON.parse(raw));
+        currentUser = JSON.parse(raw);
+        setUser(currentUser);
       }
     } catch (e) {
       console.error("Не удалось прочитать user из localStorage:", e);
     }
 
-    // грузим избранное
-    try {
-      const rawFav = localStorage.getItem(FAVORITES_KEY);
-      const ids = rawFav ? JSON.parse(rawFav) : [];
-      const normalizedIds = Array.isArray(ids) ? ids.map(String) : [];
-
-      const favPlaces = (placesData || []).filter((p) =>
-        normalizedIds.includes(String(p.id))
-      );
-
-      setFavoritePlaces(favPlaces);
-    } catch (e) {
-      console.error("Не удалось прочитать избранное:", e);
+    if (!currentUser || !currentUser.login) {
+      return;
     }
+
+    const favoritesKey = getFavoritesKey(currentUser.login);
+
+    // 2) грузим избранное + места
+    const loadFavorites = async () => {
+      try {
+        const rawFav = localStorage.getItem(favoritesKey);
+        const ids = rawFav ? JSON.parse(rawFav) : [];
+        const normalizedIds = Array.isArray(ids) ? ids.map(Number) : [];
+
+        // тянем места из API
+        let places = [];
+        try {
+          const res = await fetch(`${API_BASE}/api/places`);
+          const data = await res.json();
+          if (data.ok) {
+            places = data.places || [];
+          } else {
+            console.error("Не удалось загрузить места из API:", data.message);
+          }
+        } catch (e) {
+          console.error("Ошибка запроса /api/places:", e);
+        }
+
+        // fallback: если API ничего не вернул, используем places.json
+        if (!places.length && (placesData || []).length) {
+          places = placesData;
+        }
+
+        const favPlaces = places.filter((p) =>
+          normalizedIds.includes(Number(p.id))
+        );
+
+        setFavoritePlaces(favPlaces);
+      } catch (e) {
+        console.error("Не удалось прочитать избранное:", e);
+      }
+    };
+
+    loadFavorites();
   }, []);
 
   const handleLogout = () => {
-    // чистим localStorage
     try {
+      // чистим избранное текущего пользователя
+      const raw = localStorage.getItem("user");
+      if (raw) {
+        const u = JSON.parse(raw);
+        if (u && u.login) {
+          const key = getFavoritesKey(u.login);
+          localStorage.removeItem(key);
+        }
+      }
+
+      // на всякий случай чистим старый общий ключ
+      localStorage.removeItem("favoritePlaces");
       localStorage.removeItem("user");
-      localStorage.removeItem(FAVORITES_KEY);
     } catch (e) {
       console.error("Не удалось очистить localStorage при выходе:", e);
     }
 
-    // сбрасываем флаг авторизации в App.jsx
     if (typeof onLogout === "function") {
       onLogout();
     }
 
-    // отправляем на страницу логина
     navigate("/login");
   };
 
