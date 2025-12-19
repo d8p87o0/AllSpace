@@ -2713,6 +2713,7 @@
   gap: 6px;
   max-height: 400px;
   overflow: auto;
+  scroll-behavior: smooth;
 }
 
 .admin__place-btn {

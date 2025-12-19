@@ -1,5 +1,5 @@
 // src/Admin.jsx
-import { useEffect, useState } from "react";
+import { useEffect, useState, useRef } from "react";
 import { useNavigate } from "react-router-dom";
 import "./App.css";
 
@@ -52,8 +52,11 @@ export default function AdminPage() {
    * { id, url, order, toDelete, isNew, file, previewUrl }
    */
   const [editImages, setEditImages] = useState([]);
-
+  const placesListRef = useRef(null);
+  // Флаг, чтобы восстановить выбор после загрузки только один раз
+  const selectionRestoredRef = useRef(false);
   // помощник: собрать картинки для редактирования
+
   const buildImagesForEdit = (place, photos = []) => {
     // 1) приоритет — photos из /api/places/:id/photos
     // 2) потом place.images (что сохранили через админку ранее)
@@ -122,9 +125,60 @@ export default function AdminPage() {
     loadPlaces();
   }, []);
 
+// после загрузки мест пробуем восстановить последнее выбранное место
+  useEffect(() => {
+    if (selectionRestoredRef.current) return;
+    if (loading) return;
+    if (!places.length) return;
+
+    let storedId = null;
+    try {
+      storedId = localStorage.getItem("admin_selected_place_id");
+    } catch (e) {
+      console.error("Не удалось прочитать admin_selected_place_id:", e);
+    }
+
+    if (!storedId) return;
+    const idNum = Number(storedId);
+    if (!Number.isFinite(idNum)) return;
+
+    const place = places.find((p) => p.id === idNum);
+    if (!place) return;
+
+    selectionRestoredRef.current = true;
+    // логика выбора такая же, как при клике
+    handleSelectPlace(place);
+  }, [loading, places]);
+
+  // скроллим список так, чтобы выбранное место было по центру
+  useEffect(() => {
+    if (!placesListRef.current || !selectedPlaceId) return;
+
+    const container = placesListRef.current;
+    const activeBtn = container.querySelector(".admin__place-btn--active");
+    if (!activeBtn) return;
+
+    try {
+      activeBtn.scrollIntoView({
+        block: "center",
+        behavior: "smooth",
+      });
+    } catch (e) {
+      // fallback для старых браузеров
+      activeBtn.scrollIntoView();
+    }
+  }, [places, selectedPlaceId]);
+
   const handleSelectPlace = async (place) => {
     setSelectedPlaceId(place.id);
-
+  
+    // запоминаем выбранное место, чтобы восстановить после перезагрузки
+    try {
+      localStorage.setItem("admin_selected_place_id", String(place.id));
+    } catch (e) {
+      console.error("Не удалось сохранить admin_selected_place_id:", e);
+    }
+  
     // текстовые поля
     setEditForm({
       name: place.name || "",
@@ -138,16 +192,16 @@ export default function AdminPage() {
       featuresText: (place.features || []).join(", "),
       link: place.link || "",
     });
-
+  
     // пока грузим — очистим, чтобы не мигало старое
     setEditImages([]);
     setSuccess("");
     setError("");
-
+  
     try {
       const res = await fetch(`${API_BASE}/api/places/${place.id}/photos`);
       const data = await res.json();
-
+  
       if (data.ok && Array.isArray(data.photos) && data.photos.length) {
         // фотки с бэка (скан папки /photos/...)
         setEditImages(buildImagesForEdit(place, data.photos));
@@ -390,29 +444,37 @@ export default function AdminPage() {
 
   const confirmDelete = async () => {
     if (!deleteTarget) return;
-
+  
     setError("");
     setSuccess("");
-
+  
     try {
       const res = await fetch(`${API_BASE}/api/places/${deleteTarget.id}`, {
         method: "DELETE",
       });
-
+  
       const data = await res.json();
-
+  
       if (!data.ok) {
         setError(data.message || "Не удалось удалить место");
         return;
       }
-
+  
       setSuccess(`Место "${deleteTarget.name}" удалено`);
       setDeleteTarget(null);
+  
       if (selectedPlaceId === deleteTarget.id) {
         setSelectedPlaceId(null);
         setEditForm(emptyForm);
-        setEditImages([]); // очистим и картинки
+        setEditImages([]);
+        // убираем сохранённый id из localStorage
+        try {
+          localStorage.removeItem("admin_selected_place_id");
+        } catch (e) {
+          console.error("Не удалось удалить admin_selected_place_id:", e);
+        }
       }
+  
       await loadPlaces();
     } catch (e) {
       console.error("Ошибка удаления места:", e);
@@ -472,7 +534,7 @@ export default function AdminPage() {
                 В базе пока нет мест. Добавьте первое.
               </p>
             ) : (
-              <div className="admin__places-list">
+              <div className="admin__places-list" ref={placesListRef}>
                 {places.map((place) => (
                   <button
                     key={place.id}
