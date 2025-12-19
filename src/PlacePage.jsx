@@ -7,6 +7,7 @@ import usersData from "./users.json";
 const API_BASE = "http://localhost:3001";
 const FAVORITES_PREFIX = "favoritePlaces_";
 // Доп. описание и особенности для мест
+
 const PLACE_DETAILS = {
   1: {
     description:
@@ -25,7 +26,49 @@ const PLACE_DETAILS = {
     avgCheck: "Средний чек 300–700 ₽",
   },
 };
-
+// Краткие описания и иконки для фич из БД
+const FEATURE_CONFIG = {
+  "расположение": {
+    icon: "/location-feature.svg",
+    label: "Удобное расположение",
+    text: "Рядом с метро и ключевыми точками города.",
+  },
+  "комфортные условия": {
+    icon: "/home-feature.svg",
+    label: "Комфортные условия",
+    text: "Удобная мебель и приятная атмосфера для работы и встреч.",
+  },
+  "wi-fi": {
+    icon: "/wi-fi-reature.svg", // как ты и написал
+    label: "Быстрый Wi-Fi",
+    text: "Стабильное подключение для звонков и онлайн-работы.",
+  },
+  "кухня": {
+    icon: "/home-feature.svg",
+    label: "Кухня / мини-кухня",
+    text: "Можно разогреть еду, взять чай или перекус.",
+  },
+  "гибкие тарифы": {
+    icon: "/payment-feature.svg",
+    label: "Гибкие тарифы",
+    text: "Есть почасовая и долгосрочная аренда.",
+  },
+  "дизайн": {
+    icon: "/design-feature.svg",
+    label: "Современный дизайн",
+    text: "Эстетичное, продуманное пространство.",
+  },
+  "тишина": {
+    icon: "/home-feature.svg",
+    label: "Тихая атмосфера",
+    text: "Подходит для сосредоточенной работы и созвонов.",
+  },
+  "кофе": {
+    icon: "/payment-feature.svg",
+    label: "Кофе и напитки",
+    text: "Вкусный кофе и напитки прямо на месте.",
+  },
+};
 function getInitials(name) {
   if (!name) return "?";
   const parts = name.split(" ");
@@ -179,12 +222,14 @@ export default function PlacePage() {
       }
     };
 
-    if (Array.isArray(place.photos) && place.photos.length) {
-      setGalleryImages(place.photos);
+    // 1) Если у места есть images из БД — используем их
+    if (Array.isArray(place.images) && place.images.length) {
+      setGalleryImages(place.images);
       setActiveIndex(0);
       return;
     }
 
+    // 2) Иначе — старый режим: /api/places/:id/photos
     (async () => {
       try {
         const res = await fetch(`${API_BASE}/api/places/${place.id}/photos`);
@@ -422,56 +467,43 @@ export default function PlacePage() {
               </div>
 
               {/* Особенности */}
+              {/* Особенности */}
               <section className="place-page__section">
                 <h2 className="place-page__section-title">Особенности</h2>
 
-                <div className="place-page__features-grid">
-                  <div className="place-feature">
-                    <div className="place-feature__icon">📶</div>
-                    <div className="place-feature__content">
-                      <div className="place-feature__label">
-                        Быстрый Wi-Fi
-                      </div>
-                      <div className="place-feature__text">
-                        {details.wifi}
-                      </div>
-                    </div>
-                  </div>
+                {!place.features || place.features.length === 0 ? (
+                  <p className="place-page__features-empty">
+                    Информация об особенностях пока не указана.
+                  </p>
+                ) : (
+                  <div className="place-page__features-grid">
+                    {place.features.map((feature, index) => {
+                      const key = (feature || "").trim().toLowerCase();
+                      const cfg =
+                        FEATURE_CONFIG[key] || {
+                          icon: "/home-feature.svg",
+                          label: feature,
+                          text: "Особенность этого места.",
+                        };
 
-                  <div className="place-feature">
-                    <div className="place-feature__icon">🔌</div>
-                    <div className="place-feature__content">
-                      <div className="place-feature__label">Розетки</div>
-                      <div className="place-feature__text">
-                        {details.sockets}
-                      </div>
-                    </div>
+                      return (
+                        <div className="place-feature" key={index}>
+                          <div className="place-feature__icon">
+                            <img
+                              src={cfg.icon}
+                              alt=""
+                              className="place-feature__icon-img"
+                            />
+                          </div>
+                          <div className="place-feature__content">
+                            <div className="place-feature__label">{cfg.label}</div>
+                            <div className="place-feature__text">{cfg.text}</div>
+                          </div>
+                        </div>
+                      );
+                    })}
                   </div>
-
-                  <div className="place-feature">
-                    <div className="place-feature__icon">🔊</div>
-                    <div className="place-feature__content">
-                      <div className="place-feature__label">
-                        Уровень шума
-                      </div>
-                      <div className="place-feature__text">
-                        {details.noise}
-                      </div>
-                    </div>
-                  </div>
-
-                  <div className="place-feature">
-                    <div className="place-feature__icon">💳</div>
-                    <div className="place-feature__content">
-                      <div className="place-feature__label">
-                        Средний чек
-                      </div>
-                      <div className="place-feature__text">
-                        {details.avgCheck}
-                      </div>
-                    </div>
-                  </div>
-                </div>
+                )}
               </section>
 
               {/* Отзывы */}

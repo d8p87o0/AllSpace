@@ -26,7 +26,6 @@ export default function AdminPage() {
     window.location.href = "/";
   };
 
-
   const handleLogout = () => {
     try {
       localStorage.removeItem("user");
@@ -46,6 +45,38 @@ export default function AdminPage() {
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
   const [deleteTarget, setDeleteTarget] = useState(null); // место для поп-апа удаления
+
+  // === images: отдельное состояние для картинок выбранного места ===
+  /**
+   * editImages: массив объектов вида
+   * { id, url, order, toDelete, isNew, file, previewUrl }
+   */
+  const [editImages, setEditImages] = useState([]);
+
+  // помощник: собрать картинки для редактирования
+  const buildImagesForEdit = (place, photos = []) => {
+    // 1) приоритет — photos из /api/places/:id/photos
+    // 2) потом place.images (что сохранили через админку ранее)
+    // 3) потом одиночное поле image
+    const base =
+      (Array.isArray(photos) && photos.length)
+        ? photos
+        : (place.images && Array.isArray(place.images) && place.images.length)
+        ? place.images
+        : place.image
+        ? [place.image]
+        : [];
+
+    return base.map((url, index) => ({
+      id: `${place.id || "place"}-${index}`,
+      url,
+      order: index + 1,
+      toDelete: false,
+      isNew: false,
+      file: null,
+      previewUrl: null,
+    }));
+  };
 
   // проверяем, что это админ
   useEffect(() => {
@@ -91,8 +122,10 @@ export default function AdminPage() {
     loadPlaces();
   }, []);
 
-  const handleSelectPlace = (place) => {
+  const handleSelectPlace = async (place) => {
     setSelectedPlaceId(place.id);
+
+    // текстовые поля
     setEditForm({
       name: place.name || "",
       type: place.type || "",
@@ -105,8 +138,27 @@ export default function AdminPage() {
       featuresText: (place.features || []).join(", "),
       link: place.link || "",
     });
+
+    // пока грузим — очистим, чтобы не мигало старое
+    setEditImages([]);
     setSuccess("");
     setError("");
+
+    try {
+      const res = await fetch(`${API_BASE}/api/places/${place.id}/photos`);
+      const data = await res.json();
+
+      if (data.ok && Array.isArray(data.photos) && data.photos.length) {
+        // фотки с бэка (скан папки /photos/...)
+        setEditImages(buildImagesForEdit(place, data.photos));
+      } else {
+        // fallback: только image / images из самого place
+        setEditImages(buildImagesForEdit(place, []));
+      }
+    } catch (e) {
+      console.error("Ошибка загрузки фото для редактирования:", e);
+      setEditImages(buildImagesForEdit(place, []));
+    }
   };
 
   const handleEditChange = (event) => {
@@ -125,6 +177,103 @@ export default function AdminPage() {
       .map((s) => s.trim())
       .filter(Boolean);
 
+  // === images: работа с карточками ===
+
+  const handleImageOrderChange = (id, newOrder) => {
+    setEditImages((prev) =>
+      prev.map((img) =>
+        img.id === id ? { ...img, order: newOrder } : img
+      )
+    );
+  };
+
+  const markImageForDelete = (id) => {
+    setEditImages((prev) =>
+      prev.map((img) =>
+        img.id === id ? { ...img, toDelete: true } : img
+      )
+    );
+  };
+
+  const undoImageDelete = (id) => {
+    setEditImages((prev) =>
+      prev.map((img) =>
+        img.id === id ? { ...img, toDelete: false } : img
+      )
+    );
+  };
+
+  const handleImageFiles = (filesList) => {
+    const files = Array.from(filesList || []);
+    if (!files.length) return;
+
+    setEditImages((prev) => {
+      const maxOrder = prev.reduce(
+        (max, img) => Math.max(max, Number(img.order || 0)),
+        0
+      );
+      let currentOrder = maxOrder;
+
+      const newItems = files.map((file, idx) => {
+        currentOrder += 1;
+        return {
+          id: `new-${Date.now()}-${idx}`,
+          url: "", // зададим после загрузки на сервер
+          order: currentOrder,
+          toDelete: false,
+          isNew: true,
+          file,
+          previewUrl: URL.createObjectURL(file),
+        };
+      });
+
+      return [...prev, ...newItems];
+    });
+  };
+
+  const handleImageInputChange = (event) => {
+    if (event.target.files && event.target.files.length > 0) {
+      handleImageFiles(event.target.files);
+      // сброс, чтобы повторный выбор с теми же файлами тоже срабатывал
+      event.target.value = "";
+    }
+  };
+
+  const handleImageDrop = (event) => {
+    event.preventDefault();
+    if (event.dataTransfer.files && event.dataTransfer.files.length > 0) {
+      handleImageFiles(event.dataTransfer.files);
+      event.dataTransfer.clearData();
+    }
+  };
+
+  // helper: загрузка новых файлов на сервер
+  const uploadNewImagesIfNeeded = async () => {
+    const newImages = editImages.filter(
+      (img) => img.isNew && img.file && !img.toDelete
+    );
+
+    if (!newImages.length) return [];
+
+    const formData = new FormData();
+    newImages.forEach((img) => {
+      formData.append("files", img.file);
+    });
+
+    const res = await fetch(`${API_BASE}/api/upload`, {
+      method: "POST",
+      body: formData,
+    });
+
+    const data = await res.json();
+    if (!data.ok) {
+      throw new Error(data.message || "Не удалось загрузить изображения");
+    }
+
+    // Ожидаем, что сервер вернёт массив ссылок в том же порядке
+    return data.urls || [];
+  };
+
   const submitEdit = async (event) => {
     event.preventDefault();
     if (!selectedPlaceId) return;
@@ -132,20 +281,45 @@ export default function AdminPage() {
     setError("");
     setSuccess("");
 
-    const body = {
-      name: editForm.name.trim(),
-      type: editForm.type.trim(),
-      city: editForm.city.trim(),
-      address: editForm.address.trim(),
-      image: editForm.image.trim(),
-      badge: editForm.badge.trim(),
-      rating: editForm.rating ? Number(editForm.rating) : null,
-      reviews: editForm.reviews ? Number(editForm.reviews) : null,
-      features: parseFeatures(editForm.featuresText),
-      link: editForm.link.trim(),
-    };
-
     try {
+      // 1) Загружаем все новые картинки (isNew)
+      const uploadedUrls = await uploadNewImagesIfNeeded();
+      let uploadIndex = 0;
+
+      // 2) Формируем финальный список картинок без помеченных на удаление
+      const finalImages = editImages
+        .filter((img) => !img.toDelete)
+        .map((img) => {
+          if (img.isNew) {
+            const url = uploadedUrls[uploadIndex++];
+            return { ...img, url };
+          }
+          return img;
+        })
+        .filter((img) => img.url); // только те, у кого есть url
+
+      finalImages.sort(
+        (a, b) => Number(a.order || 0) - Number(b.order || 0)
+      );
+
+      const imagesForServer = finalImages.map((img) => img.url);
+
+      const body = {
+        name: editForm.name.trim(),
+        type: editForm.type.trim(),
+        city: editForm.city.trim(),
+        address: editForm.address.trim(),
+        // главная картинка — первая по порядку, если есть
+        image: imagesForServer[0] || editForm.image.trim(),
+        // новый массив картинок (для галереи)
+        images: imagesForServer,
+        badge: editForm.badge.trim(),
+        rating: editForm.rating ? Number(editForm.rating) : null,
+        reviews: editForm.reviews ? Number(editForm.reviews) : null,
+        features: parseFeatures(editForm.featuresText),
+        link: editForm.link.trim(),
+      };
+
       const res = await fetch(`${API_BASE}/api/places/${selectedPlaceId}`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
@@ -163,12 +337,12 @@ export default function AdminPage() {
       await loadPlaces();
 
       if (data.place) {
-        // обновим форму свежими данными
+        // обновим форму и картинки свежими данными
         handleSelectPlace(data.place);
       }
     } catch (e) {
       console.error("Ошибка обновления места:", e);
-      setError("Ошибка соединения с сервером");
+      setError(e.message || "Ошибка соединения с сервером");
     }
   };
 
@@ -237,6 +411,7 @@ export default function AdminPage() {
       if (selectedPlaceId === deleteTarget.id) {
         setSelectedPlaceId(null);
         setEditForm(emptyForm);
+        setEditImages([]); // очистим и картинки
       }
       await loadPlaces();
     } catch (e) {
@@ -256,9 +431,7 @@ export default function AdminPage() {
         <div className="admin__header">
           <div>
             <h1 className="admin__title">Админ-панель</h1>
-            <p className="admin__subtitle">
-              Управление местами для каталога
-            </p>
+            <p className="admin__subtitle">Управление местами для каталога</p>
           </div>
 
           <div className="admin__header-actions">
@@ -280,7 +453,9 @@ export default function AdminPage() {
           </div>
         </div>
 
-        {error && <div className="admin__alert admin__alert--error">{error}</div>}
+        {error && (
+          <div className="admin__alert admin__alert--error">{error}</div>
+        )}
         {success && (
           <div className="admin__alert admin__alert--success">{success}</div>
         )}
@@ -417,6 +592,107 @@ export default function AdminPage() {
                       value={editForm.link}
                       onChange={handleEditChange}
                     />
+                  </div>
+
+                  {/* === Блок картинок === */}
+                  <div className="admin-images">
+                    <div className="admin-images__header">
+                      <span>Фотографии</span>
+                      <span className="admin-images__hint">
+                        Перетаскивай, кликай, меняй порядок
+                      </span>
+                    </div>
+
+                    <div className="admin-images__grid">
+                      {editImages.map((img) => {
+                        const preview = img.previewUrl || img.url;
+                        if (!preview) return null;
+                        return (
+                          <div
+                            key={img.id}
+                            className={
+                              "admin-image-card" +
+                              (img.toDelete
+                                ? " admin-image-card--deleted"
+                                : "")
+                            }
+                          >
+                            <div className="admin-image-card__thumb-wrap">
+                              <img
+                                src={preview}
+                                alt=""
+                                className="admin-image-card__thumb"
+                              />
+
+                              <div className="admin-image-card__index-badge">
+                                <input
+                                  type="number"
+                                  min="1"
+                                  className="admin-image-card__index-input"
+                                  value={img.order ?? ""}
+                                  onChange={(e) =>
+                                    handleImageOrderChange(
+                                      img.id,
+                                      Number(e.target.value) || 1
+                                    )
+                                  }
+                                />
+                              </div>
+
+                              {!img.toDelete && (
+                                <button
+                                  type="button"
+                                  className="admin-image-card__remove"
+                                  onClick={() =>
+                                    markImageForDelete(img.id)
+                                  }
+                                >
+                                  ×
+                                </button>
+                              )}
+                            </div>
+
+                            {img.toDelete && (
+                              <button
+                                type="button"
+                                className="admin-image-card__undo"
+                                onClick={() => undoImageDelete(img.id)}
+                              >
+                                Отменить удаление
+                              </button>
+                            )}
+
+                            {!img.isNew && (
+                              <div
+                                className="admin-image-card__path"
+                                title={img.url}
+                              >
+                                {img.url}
+                              </div>
+                            )}
+                          </div>
+                        );
+                      })}
+
+                      {/* Карточка добавления новых фото */}
+                      <label
+                        className="admin-image-add"
+                        onDragOver={(e) => e.preventDefault()}
+                        onDrop={handleImageDrop}
+                      >
+                        <input
+                          type="file"
+                          accept="image/*"
+                          multiple
+                          className="admin-image-add__input"
+                          onChange={handleImageInputChange}
+                        />
+                        <div className="admin-image-add__icon">+</div>
+                        <div className="admin-image-add__text">
+                          Перетащите фото или нажмите, чтобы выбрать
+                        </div>
+                      </label>
+                    </div>
                   </div>
 
                   <label className="admin-label">

@@ -6,6 +6,7 @@ import { suggestCities, cityExists } from "./cities.js";
 import fs from "fs";
 import path from "path";
 import { fileURLToPath } from "url";
+import multer from "multer"; // 🔹 для загрузки файлов
 
 import nodemailer from "nodemailer";
 import dotenv from "dotenv";
@@ -14,11 +15,6 @@ dotenv.config();
 
 const app = express();
 const PORT = 3001;
-
-
-
-
-
 
 app.use(
   cors({
@@ -32,6 +28,35 @@ const __dirname = path.dirname(__filename);
 
 // Работа с фото
 const photosRoot = path.join(__dirname, "photos");
+if (!fs.existsSync(photosRoot)) {
+  fs.mkdirSync(photosRoot, { recursive: true });
+}
+
+// Папка для загруженных через /api/upload картинок
+const uploadRoot = path.join(photosRoot, "uploads");
+if (!fs.existsSync(uploadRoot)) {
+  fs.mkdirSync(uploadRoot, { recursive: true });
+}
+
+// 🔹 настройка multer
+const storage = multer.diskStorage({
+  destination(req, file, cb) {
+    cb(null, uploadRoot);
+  },
+  filename(req, file, cb) {
+    const ext = path.extname(file.originalname) || "";
+    const base =
+      path
+        .basename(file.originalname, ext)
+        .toLowerCase()
+        .replace(/[^a-z0-9а-я]+/gi, "-")
+        .slice(0, 40) || "file";
+    const unique = Date.now() + "-" + Math.round(Math.random() * 1e9);
+    cb(null, `${base}-${unique}${ext}`);
+  },
+});
+
+const upload = multer({ storage });
 
 function normalizeKey(str = "") {
   return str
@@ -86,8 +111,37 @@ function listPhotos(folder, req) {
 }
 
 function collectPlacePhotos(place, req) {
+  const host = `${req.protocol}://${req.get("host")}`;
+
+  // 1) Если у места явно задан список images в БД — доверяем ему и сохраняем порядок
+  if (Array.isArray(place?.images) && place.images.length) {
+    const photos = place.images
+      .map((url) => {
+        if (!url) return null;
+
+        // уже абсолютный URL
+        if (/^https?:\/\//i.test(url)) return url;
+
+        // начинается с /photos/... — просто добавляем host
+        if (url.startsWith("/photos/")) return `${host}${url}`;
+
+        // начинается с /uploads или другой относительный путь
+        if (url.startsWith("/")) return `${host}${url}`;
+
+        // совсем голое имя файла / относительный путь — считаем от /photos
+        return `${host}/photos/${url}`;
+      })
+      .filter(Boolean);
+
+    const cover = photos[0] || place.image || null;
+    return { photos, cover };
+  }
+
+  // 2) Легаси-режим: ищем папку по URL/названию и сканируем все файлы
+  const firstImage = Array.isArray(place?.images) ? place.images[0] : null;
   const folder =
     extractFolderFromImage(place?.image || "") ||
+    extractFolderFromImage(firstImage || "") ||
     findFolderByName(place?.name || "");
   const photos = listPhotos(folder, req);
   return { photos, cover: photos[0] || place?.image || null };
@@ -95,6 +149,27 @@ function collectPlacePhotos(place, req) {
 
 // ✅ статическая раздача фото
 app.use("/photos", express.static(path.join(__dirname, "photos")));
+
+// 🔹 API загрузки фото: /api/upload
+app.post("/api/upload", upload.array("files", 20), (req, res) => {
+  try {
+    const host = `${req.protocol}://${req.get("host")}`;
+    const files = req.files || [];
+    if (!files.length) {
+      return res.json({ ok: true, urls: [] });
+    }
+    const urls = files.map(
+      (f) =>
+        `${host}/photos/uploads/${encodeURIComponent(path.basename(f.filename))}`
+    );
+    return res.json({ ok: true, urls });
+  } catch (e) {
+    console.error("Upload error:", e);
+    return res
+      .status(500)
+      .json({ ok: false, message: "Ошибка загрузки файлов" });
+  }
+});
 
 // ===================== PLACES: таблица и начальное наполнение =====================
 
@@ -108,6 +183,7 @@ db.serialize(() => {
       city TEXT,
       address TEXT,
       image TEXT,
+      images TEXT, -- JSON-массив ссылок на картинки
       badge TEXT,
       rating REAL,
       reviews INTEGER,
@@ -116,10 +192,34 @@ db.serialize(() => {
     )
   `);
 
+  // 🔹 на случай старой БД — добавим колонку images, если её нет
+  db.all("PRAGMA table_info(places)", (err, columns) => {
+    if (err) {
+      console.error("Ошибка PRAGMA table_info(places):", err);
+    } else {
+      const hasImages = columns.some((c) => c.name === "images");
+      if (!hasImages) {
+        db.run(
+          "ALTER TABLE places ADD COLUMN images TEXT",
+          (alterErr) => {
+            if (alterErr) {
+              console.error(
+                "Ошибка добавления столбца images в places:",
+                alterErr
+              );
+            } else {
+              console.log("Столбец images добавлен в таблицу places");
+            }
+          }
+        );
+      }
+    }
+  });
+
   // Путь к places.json (если структура проекта: /server/server.js и /src/places.json)
   const placesJsonPath = path.join(__dirname, "../src/places.json");
 
-  // Один раз перенесём данные из places.json в БД, если таблица пустая
+  // Один раз перенесём данные из places.json в БД, если таблица пуста
   db.get("SELECT COUNT(*) AS cnt FROM places", (err, row) => {
     if (err) {
       console.error("Ошибка подсчёта places:", err);
@@ -134,14 +234,15 @@ db.serialize(() => {
 
         const insertSql = `
           INSERT INTO places
-            (id, name, type, city, address, image, badge, rating, reviews, features, link)
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            (id, name, type, city, address, image, images, badge, rating, reviews, features, link)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         `;
 
         const stmt = db.prepare(insertSql);
 
         for (const p of placesFromJson) {
           const featuresJson = JSON.stringify(p.features || []);
+          const imagesJson = JSON.stringify(p.images || []);
           stmt.run(
             p.id || null,
             p.name || "",
@@ -149,6 +250,7 @@ db.serialize(() => {
             p.city || null,
             p.address || null,
             p.image || null,
+            imagesJson,
             p.badge || null,
             typeof p.rating === "number" ? p.rating : null,
             typeof p.reviews === "number" ? p.reviews : null,
@@ -166,7 +268,7 @@ db.serialize(() => {
   });
 });
 
-// хелпер для преобразования строки features в массив
+// хелпер для преобразования строки features / images в объекты
 function mapPlaceRow(row) {
   let features = [];
   try {
@@ -174,6 +276,14 @@ function mapPlaceRow(row) {
   } catch (e) {
     features = [];
   }
+
+  let images = [];
+  try {
+    images = row.images ? JSON.parse(row.images) : [];
+  } catch (e) {
+    images = [];
+  }
+
   return {
     id: row.id,
     name: row.name,
@@ -181,6 +291,7 @@ function mapPlaceRow(row) {
     city: row.city,
     address: row.address,
     image: row.image,
+    images,
     badge: row.badge,
     rating: row.rating,
     reviews: row.reviews,
@@ -460,8 +571,19 @@ app.get("/api/places", (req, res) => {
 
 // Добавить место
 app.post("/api/places", (req, res) => {
-  const { name, type, city, address, image, badge, rating, reviews, features, link } =
-    req.body;
+  const {
+    name,
+    type,
+    city,
+    address,
+    image,
+    images,
+    badge,
+    rating,
+    reviews,
+    features,
+    link,
+  } = req.body;
 
   if (!name || !name.trim()) {
     return res.json({
@@ -471,26 +593,28 @@ app.post("/api/places", (req, res) => {
   }
 
   const featuresJson = JSON.stringify(Array.isArray(features) ? features : []);
+  const imagesJson = JSON.stringify(Array.isArray(images) ? images : []);
 
   const sql = `
     INSERT INTO places
-      (name, type, city, address, image, badge, rating, reviews, features, link)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      (name, type, city, address, image, images, badge, rating, reviews, features, link)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `;
 
   db.run(
     sql,
     [
       name.trim(),
-      (type || null),
-      (city || null),
-      (address || null),
-      (image || null),
-      (badge || null),
+      type || null,
+      city || null,
+      address || null,
+      image || null,
+      imagesJson,
+      badge || null,
       rating ?? null,
       reviews ?? null,
       featuresJson,
-      (link || null),
+      link || null,
     ],
     function (err) {
       if (err) {
@@ -525,8 +649,19 @@ app.put("/api/places/:id", (req, res) => {
     });
   }
 
-  const { name, type, city, address, image, badge, rating, reviews, features, link } =
-    req.body;
+  const {
+    name,
+    type,
+    city,
+    address,
+    image,
+    images,
+    badge,
+    rating,
+    reviews,
+    features,
+    link,
+  } = req.body;
 
   if (!name || !name.trim()) {
     return res.json({
@@ -536,6 +671,7 @@ app.put("/api/places/:id", (req, res) => {
   }
 
   const featuresJson = JSON.stringify(Array.isArray(features) ? features : []);
+  const imagesJson = JSON.stringify(Array.isArray(images) ? images : []);
 
   const sql = `
     UPDATE places
@@ -545,6 +681,7 @@ app.put("/api/places/:id", (req, res) => {
       city = ?,
       address = ?,
       image = ?,
+      images = ?,
       badge = ?,
       rating = ?,
       reviews = ?,
@@ -557,15 +694,16 @@ app.put("/api/places/:id", (req, res) => {
     sql,
     [
       name.trim(),
-      (type || null),
-      (city || null),
-      (address || null),
-      (image || null),
-      (badge || null),
+      type || null,
+      city || null,
+      address || null,
+      image || null,
+      imagesJson,
+      badge || null,
       rating ?? null,
       reviews ?? null,
       featuresJson,
-      (link || null),
+      link || null,
       id,
     ],
     function (err) {
@@ -627,7 +765,7 @@ app.delete("/api/places/:id", (req, res) => {
   });
 });
 
-// Фотографии места
+// Фотографии места (по папке на диске, оставляем как есть)
 app.get("/api/places/:id/photos", (req, res) => {
   const id = Number(req.params.id);
   if (!Number.isInteger(id)) {

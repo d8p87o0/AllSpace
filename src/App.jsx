@@ -182,11 +182,6 @@ function App() {
     }
   }, [allRatings, selectedRatings.length]);
 
-  useEffect(() => {
-    if (allFeatures.length && selectedFeatures.length === 0) {
-      setSelectedFeatures(allFeatures);
-    }
-  }, [allFeatures, selectedFeatures.length]);
 
   // --- функции переключения опций в дропдауне ---
   const toggleTypeOption = (type) => {
