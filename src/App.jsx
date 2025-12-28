@@ -11,6 +11,25 @@ import AdminPage from "./Admin.jsx";
 
 const API_BASE = "http://localhost:3001";
 
+function resolveMediaUrl(url) {
+  if (!url) return url;
+
+  // абсолютные ссылки не трогаем
+  if (/^https?:\/\//i.test(url)) return url;
+
+  // серверная статика лежит на 3001
+  if (url.startsWith("/photos/")) return `${API_BASE}${url}`;
+
+  // например /p1p1.png из public
+  return url;
+}
+
+function getCover(place) {
+  const fromImage = place?.image;
+  const fromGallery = Array.isArray(place?.images) && place.images.length ? place.images[0] : null;
+  return fromImage || fromGallery || "/no-photo.png"; // можешь заменить на свою заглушку
+}
+
 const CITIES = [
   { id: "moscow", name: "Москва", top: "47%", left: "14%" },
   { id: "spb", name: "Санкт-Петербург", top: "33%", left: "15%" },
@@ -535,6 +554,18 @@ function App() {
               <>
                 {/* Hero */}
                 <section className="hero">
+                  <video
+                    className="hero__bg-video"
+                    autoPlay
+                    muted
+                    loop
+                    playsInline
+                    preload="auto"
+                    onError={(e) => console.log("VIDEO ERROR", e)}
+                  >
+                    <source src="/hero-bg.mp4" type="video/mp4" />
+                  </video>
+
                   <div className="hero__overlay" />
                   <div className="container hero__content">
                     <h1 className="hero__title">
@@ -766,11 +797,14 @@ function App() {
                           onClick={() => navigate(`/place/${place.id}`)}
                         >
                           <div className="place-card__image-wrapper">
-                            <img
-                              src={place.image}
-                              alt={place.name}
-                              className="place-card__image"
-                            />
+                          <img
+                            src={resolveMediaUrl(getCover(place))}
+                            alt={place.name}
+                            className="place-card__image"
+                            onError={(e) => {
+                              e.currentTarget.src = "/no-photo.png"; // заглушка (положи в /public)
+                            }}
+                          />
                             {place.badge && (
                               <span className="place-card__badge">
                                 {place.badge}

@@ -39,7 +39,7 @@ const FEATURE_KEYWORDS = [
 
 function extractFeaturesAndDescription(pros, baseDescription) {
   const prosArray = Array.isArray(pros) ? pros.filter(Boolean) : [];
-  const prosLower = prosArray.map((s) => s.toLowerCase());
+  const prosLower = prosArray.map((s) => String(s).toLowerCase());
 
   const usedIndexes = new Set();
   const matchedLabels = [];
@@ -57,7 +57,6 @@ function extractFeaturesAndDescription(pros, baseDescription) {
         matched = true;
         matchedLabels.push(label);
 
-        // помечаем все строки, где есть этот паттерн, как "использованные"
         prosLower.forEach((t2, idx2) => {
           if (patterns.some((pat) => t2.includes(pat))) {
             usedIndexes.add(idx2);
@@ -67,71 +66,117 @@ function extractFeaturesAndDescription(pros, baseDescription) {
     });
   }
 
-  // Остаток плюсов — в описание
   const leftoverPros = prosArray.filter((_, idx) => !usedIndexes.has(idx));
 
   let description = (baseDescription || "").trim();
   const leftoverText = leftoverPros.join("\n");
 
   if (leftoverText) {
-    description = description
-      ? `${description}\n\n${leftoverText}`
-      : leftoverText;
+    description = description ? `${description}\n\n${leftoverText}` : leftoverText;
   }
 
   if (!description) description = null;
 
-  const featuresJson = matchedLabels.length
-    ? JSON.stringify(matchedLabels)
-    : null;
-
+  const featuresJson = matchedLabels.length ? JSON.stringify(matchedLabels) : null;
   return { featuresJson, description };
 }
 
 // ===== Определение типа места по JSON (segments / type) =====
 function mapTypeFromJson(placeJson) {
-  // если в JSON уже есть понятный type — используем его
   if (placeJson.type && String(placeJson.type).trim()) {
     return String(placeJson.type).trim();
   }
 
   const segments = [];
-  if (Array.isArray(placeJson.segments)) {
-    segments.push(...placeJson.segments);
-  }
-  if (placeJson.place && Array.isArray(placeJson.place.segments)) {
-    segments.push(...placeJson.place.segments);
-  }
+  if (Array.isArray(placeJson.segments)) segments.push(...placeJson.segments);
+  if (placeJson.place && Array.isArray(placeJson.place.segments)) segments.push(...placeJson.place.segments);
 
   const segLower = segments.map((s) => String(s).toLowerCase());
 
-  if (segLower.some((s) => s.includes("cafe") || s.includes("coffee") || s.includes("cafes"))) {
-    return "Кафе / кофейня";
-  }
-  if (segLower.some((s) => s.includes("cowork"))) {
-    return "Коворкинг";
-  }
-  if (segLower.some((s) => s.includes("library") || s.includes("библиот"))) {
-    return "Библиотека";
-  }
-  if (segLower.some((s) => s.includes("office"))) {
-    return "Офис / рабочее пространство";
-  }
-  if (segLower.some((s) => s.includes("restaurant") || s.includes("ресторан"))) {
-    return "Ресторан";
-  }
-  if (segLower.some((s) => s.includes("bar"))) {
-    return "Бар";
-  }
+  if (segLower.some((s) => s.includes("cafe") || s.includes("coffee") || s.includes("cafes"))) return "Кафе / кофейня";
+  if (segLower.some((s) => s.includes("cowork"))) return "Коворкинг";
+  if (segLower.some((s) => s.includes("library") || s.includes("библиот"))) return "Библиотека";
+  if (segLower.some((s) => s.includes("office"))) return "Офис / рабочее пространство";
+  if (segLower.some((s) => s.includes("restaurant") || s.includes("ресторан"))) return "Ресторан";
+  if (segLower.some((s) => s.includes("bar"))) return "Бар";
 
-  // дефолт — как раньше
   return "Коворкинг / антикафе";
+}
+
+// ===== ЧИСТКА ЧАСОВ РАБОТЫ =====
+function extractWorkingHours(rawHours) {
+  if (!rawHours) return null;
+
+  const text = String(rawHours)
+    .replace(/\r/g, "\n")
+    .replace(/\u00a0/g, " ")
+    .trim();
+
+  if (!text) return null;
+
+  // режем по строкам, выкидываем пустые
+  let lines = text
+    .split("\n")
+    .map((l) => l.trim())
+    .filter(Boolean);
+
+  if (!lines.length) return null;
+
+  // убираем “мусорные” куски (wi-fi, бесплатно и т.п.)
+  const trashRe = /(wi-?fi|wifi|вайфай|бесплатно|free|оплата|цены|кофе)/i;
+  lines = lines
+    .map((l) => l.replace(trashRe, "").trim())
+    .filter(Boolean);
+
+  // оставляем только строки, где есть день недели/ежедневно/или время
+  const dayRe = /(ежедневно|круглосуточно|будни|выходн|пн|вт|ср|чт|пт|сб|вс|понедельник|воскресенье)/i;
+  const timeRe = /\b\d{1,2}:\d{2}\b/;
+
+  const good = lines.filter((l) => dayRe.test(l) || timeRe.test(l));
+
+  // если фильтрация всё съела — вернём первые 1–2 строки как fallback
+  const finalLines = good.length ? good : lines.slice(0, 2);
+
+  return finalLines.join("\n").trim() || null;
+}
+
+// ===== Телефон =====
+function extractPhone(placeJson) {
+  const placeBlock = placeJson.place || {};
+  const rawPhone =
+    (placeBlock.phone && String(placeBlock.phone).trim()) ||
+    (placeJson.phone && String(placeJson.phone).trim()) ||
+    null;
+
+  return rawPhone && rawPhone.trim() ? rawPhone.trim() : null;
+}
+
+// ===== Галерея картинок =====
+// Предпочтение: photos_files (локальные), иначе photo_urls (удалённые)
+function extractImages(placeJson) {
+  const files = Array.isArray(placeJson.photos_files) ? placeJson.photos_files : [];
+  const urls = Array.isArray(placeJson.photo_urls) ? placeJson.photo_urls : [];
+
+  // Преобразуем windows-path "photos\Папка\01.png" -> "/photos/Папка/01.png"
+  // ВАЖНО: это будет отдавать API (3001), а фронт мы научим подставлять API_BASE.
+  const normalizedFiles = files
+    .map((p) => String(p).trim())
+    .filter(Boolean)
+    .map((p) => p.replace(/\\/g, "/"))
+    .map((p) => {
+      const idx = p.toLowerCase().indexOf("photos/");
+      if (idx >= 0) return "/" + p.slice(idx); // "/photos/...."
+      return p.startsWith("/") ? p : "/" + p;
+    });
+
+  const list = normalizedFiles.length ? normalizedFiles : urls;
+  return Array.isArray(list) ? list.filter(Boolean) : [];
 }
 
 const db = new sqlite3.Database(dbPath);
 
 db.serialize(() => {
-  // 1) На случай, если таблицы вообще не было
+  // 1) Таблица places (с нужными полями)
   db.run(
     `
     CREATE TABLE IF NOT EXISTS places (
@@ -141,21 +186,23 @@ db.serialize(() => {
       city TEXT,
       address TEXT,
       image TEXT,
+      images TEXT,      -- JSON-массив
       badge TEXT,
       rating REAL,
       reviews INTEGER,
-      features TEXT,
-      link TEXT
+      features TEXT,    -- JSON-массив
+      link TEXT,
+      description TEXT,
+      hours TEXT,
+      phone TEXT
     )
   `,
     (err) => {
-      if (err) {
-        console.error("Ошибка CREATE TABLE places:", err);
-      }
+      if (err) console.error("Ошибка CREATE TABLE places:", err);
     }
   );
 
-  // 2) Проверяем наличие колонок description и hours, при отсутствии — добавляем
+  // 2) Добавляем колонки на старых БД (если нет)
   db.all("PRAGMA table_info(places)", (err, cols) => {
     if (err) {
       console.error("Ошибка PRAGMA table_info:", err);
@@ -163,60 +210,37 @@ db.serialize(() => {
       return;
     }
 
-    const hasDescription = cols.some((c) => c.name === "description");
-    const hasHours = cols.some((c) => c.name === "hours");
+    const need = [
+      "images",
+      "description",
+      "hours",
+      "phone",
+    ].filter((col) => !cols.some((c) => c.name === col));
 
-    let pendingAlters = 0;
-
-    if (!hasDescription) pendingAlters++;
-    if (!hasHours) pendingAlters++;
-
-    if (pendingAlters === 0) {
+    if (!need.length) {
       processPlaces();
       return;
     }
 
-    const doneAlter = () => {
-      pendingAlters--;
-      if (pendingAlters === 0) {
-        processPlaces();
-      }
+    let pending = need.length;
+    const done = () => {
+      pending--;
+      if (pending === 0) processPlaces();
     };
 
-    if (!hasDescription) {
-      db.run(
-        "ALTER TABLE places ADD COLUMN description TEXT",
-        (alterErr) => {
-          if (alterErr) {
-            console.error("Ошибка ALTER TABLE (description):", alterErr);
-          } else {
-            console.log("Колонка description добавлена в таблицу places");
-          }
-          doneAlter();
-        }
-      );
-    }
-
-    if (!hasHours) {
-      db.run(
-        "ALTER TABLE places ADD COLUMN hours TEXT",
-        (alterErr) => {
-          if (alterErr) {
-            console.error("Ошибка ALTER TABLE (hours):", alterErr);
-          } else {
-            console.log("Колонка hours добавлена в таблицу places");
-          }
-          doneAlter();
-        }
-      );
-    }
+    need.forEach((col) => {
+      db.run(`ALTER TABLE places ADD COLUMN ${col} TEXT`, (e) => {
+        if (e) console.error(`Ошибка ALTER TABLE (${col}):`, e);
+        else console.log(`Колонка ${col} добавлена в places`);
+        done();
+      });
+    });
   });
 });
 
 function processPlaces() {
-  // 3) Считываем текущее содержимое таблицы (с description и hours)
   db.all(
-    "SELECT id, name, type, city, address, image, badge, rating, reviews, features, link, description, hours FROM places",
+    "SELECT id, name, type, city, address, image, images, badge, rating, reviews, features, link, description, hours, phone FROM places",
     (err, rows) => {
       if (err) {
         console.error("Ошибка SELECT из places:", err);
@@ -227,10 +251,7 @@ function processPlaces() {
       const byName = new Map();
       for (const row of rows) {
         const key = (row.name || "").trim();
-        if (!key) continue;
-        if (!byName.has(key)) {
-          byName.set(key, row);
-        }
+        if (key && !byName.has(key)) byName.set(key, row);
       }
 
       const updateStmt = db.prepare(`
@@ -245,14 +266,16 @@ function processPlaces() {
           features = ?,
           link = ?,
           description = ?,
-          hours = ?
+          hours = ?,
+          phone = ?,
+          images = ?
         WHERE id = ?
       `);
 
       const insertStmt = db.prepare(`
         INSERT INTO places
-          (name, type, city, address, image, badge, rating, reviews, features, link, description, hours)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          (name, type, city, address, image, images, badge, rating, reviews, features, link, description, hours, phone)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `);
 
       let processed = 0;
@@ -264,15 +287,10 @@ function processPlaces() {
         if (!name) continue;
         processed++;
 
-        // --- блок place (старый формат) и верхний уровень (новый формат) ---
         const placeBlock = p.place || {};
 
-        // адрес: сначала берём явный address (place.address или p.address),
-        // если нет — пытаемся вытащить из строки metro
-        let parsedAddress =
-          placeBlock.address ||
-          p.address ||
-          null;
+        // address
+        let parsedAddress = placeBlock.address || p.address || null;
 
         const metroText =
           (typeof placeBlock.metro === "string" && placeBlock.metro) ||
@@ -284,17 +302,13 @@ function processPlaces() {
           if (addrIndex >= 0) {
             let a = metroText.slice(addrIndex + "Адрес:".length);
             const hoursIdx = a.indexOf("Часы работы");
-            if (hoursIdx >= 0) {
-              a = a.slice(0, hoursIdx);
-            }
+            if (hoursIdx >= 0) a = a.slice(0, hoursIdx);
             parsedAddress = a.trim() || null;
           }
         }
 
-        // рейтинг и отзывы — поддерживаем и reviews, и reviews_count
-        const newRating =
-          typeof p.rating === "number" ? p.rating : null;
-
+        // rating/reviews
+        const newRating = typeof p.rating === "number" ? p.rating : null;
         const newReviews =
           typeof p.reviews === "number"
             ? p.reviews
@@ -302,59 +316,48 @@ function processPlaces() {
             ? p.reviews_count
             : null;
 
-        // фичи и описание из pros / description
-        const { featuresJson, description } = extractFeaturesAndDescription(
-          p.pros,
-          p.description
-        );
+        // features/description
+        const { featuresJson, description } = extractFeaturesAndDescription(p.pros, p.description);
 
-        // ссылка на карту / сайт
-        const newLink =
-          placeBlock.map_url ||
-          p.map_url ||
-          p.url ||
-          null;
+        // link
+        const newLink = placeBlock.map_url || p.map_url || p.url || null;
 
-        // часы работы: поддерживаем place.hours и p.hours
-        const hoursRaw =
-          (placeBlock.hours && String(placeBlock.hours).trim()) ||
-          (p.hours && String(p.hours).trim()) ||
-          null;
+        // hours (clean)
+        const hoursRaw = (placeBlock.hours && String(placeBlock.hours).trim()) || (p.hours && String(p.hours).trim()) || null;
+        const hoursClean = extractWorkingHours(hoursRaw);
 
-        // тип места
+        // phone
+        const phone = extractPhone(p);
+
+        // type/city defaults
         const typeFromJson = mapTypeFromJson(p);
+        const typeToSetDefault = typeFromJson || "Коворкинг / антикафе";
+        const cityDefault = "Москва";
+
+        // images
+        const images = extractImages(p);
+        const imagesJson = JSON.stringify(images);
 
         const existing = byName.get(name);
 
         if (existing) {
-          // === Обновляем существующую запись ===
-          // name и image НЕ трогаем
-          // тип: если из JSON удалось определить — берём его
-          // (если хочешь не затирать ручные значения — можно поменять логику)
-          const typeToSet =
-            typeFromJson || existing.type || "Коворкинг / антикафе";
-
-          // город: сохраняем существующий, если уже есть, иначе по умолчанию Москва
-          const cityToSet = existing.city || "Москва";
-
+          const typeToSet = typeFromJson || existing.type || "Коворкинг / антикафе";
+          const cityToSet = existing.city || cityDefault;
           const addressToSet = parsedAddress || existing.address || null;
           const badgeToSet = existing.badge || null;
 
-          const ratingToSet =
-            newRating !== null ? newRating : existing.rating;
-          const reviewsToSet =
-            newReviews !== null ? newReviews : existing.reviews;
+          const ratingToSet = newRating !== null ? newRating : existing.rating;
+          const reviewsToSet = newReviews !== null ? newReviews : existing.reviews;
 
-          const featuresToSet =
-            featuresJson !== null ? featuresJson : existing.features;
-
+          const featuresToSet = featuresJson !== null ? featuresJson : existing.features;
           const linkToSet = newLink || existing.link || null;
 
-          const descriptionToSet =
-            description || existing.description || null;
+          const descriptionToSet = description || existing.description || null;
+          const hoursToSet = hoursClean || existing.hours || null;
+          const phoneToSet = phone || existing.phone || null;
 
-          const hoursToSet =
-            hoursRaw || existing.hours || null;
+          // images: если в БД пусто — заполним из JSON
+          const imagesToSet = (existing.images && String(existing.images).trim()) ? existing.images : imagesJson;
 
           updateStmt.run(
             typeToSet,
@@ -367,50 +370,36 @@ function processPlaces() {
             linkToSet,
             descriptionToSet,
             hoursToSet,
+            phoneToSet,
+            imagesToSet,
             existing.id,
             (uErr) => {
-              if (uErr) {
-                console.error(`❌ Ошибка UPDATE для "${name}":`, uErr);
-              } else {
-                updated++;
-              }
+              if (uErr) console.error(`❌ Ошибка UPDATE для "${name}":`, uErr);
+              else updated++;
             }
           );
         } else {
-          // === Нет в БД — добавляем новую запись ===
-
-          // первая картинка из photo_urls (для новых мест)
-          const imageFromJson =
-            Array.isArray(p.photo_urls) && p.photo_urls.length > 0
-              ? p.photo_urls[0]
-              : null;
-
-          const typeToSet = typeFromJson || "Коворкинг / антикафе";
-
-          // по kowo_full все места, скорее всего, Москва — задаём дефолт
-          const cityToSet = "Москва";
-
-          const badgeToSet = null;
+          // cover image: первая из images (если есть)
+          const imageFromJson = images[0] || (Array.isArray(p.photo_urls) && p.photo_urls[0]) || null;
 
           insertStmt.run(
-            name,               // name
-            typeToSet,          // type
-            cityToSet,          // city
-            parsedAddress,      // address
-            imageFromJson,      // image
-            badgeToSet,         // badge
-            newRating,          // rating
-            newReviews,         // reviews
-            featuresJson,       // features
-            newLink,            // link
-            description,        // description
-            hoursRaw,           // hours
+            name,                 // name
+            typeToSetDefault,     // type
+            cityDefault,          // city
+            parsedAddress,        // address
+            imageFromJson,        // image
+            imagesJson,           // images
+            null,                 // badge
+            newRating,            // rating
+            newReviews,           // reviews
+            featuresJson,         // features
+            newLink,              // link
+            description,          // description
+            hoursClean,           // hours
+            phone,                // phone
             (iErr) => {
-              if (iErr) {
-                console.error(`❌ Ошибка INSERT для "${name}":`, iErr);
-              } else {
-                inserted++;
-              }
+              if (iErr) console.error(`❌ Ошибка INSERT для "${name}":`, iErr);
+              else inserted++;
             }
           );
         }

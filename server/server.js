@@ -147,6 +147,18 @@ function collectPlacePhotos(place, req) {
   return { photos, cover: photos[0] || place?.image || null };
 }
 
+function enrichPlaceForClient(place, req) {
+  const { photos, cover } = collectPlacePhotos(place, req);
+
+  return {
+    ...place,
+    // cover = первая фотка (если нашлась), иначе то, что в БД
+    image: cover || place.image || null,
+    // если нашли фотки на диске — отдадим их как images
+    images: Array.isArray(photos) && photos.length ? photos : (place.images || []),
+  };
+}
+
 // ✅ статическая раздача фото
 app.use("/photos", express.static(path.join(__dirname, "photos")));
 
@@ -188,7 +200,9 @@ db.serialize(() => {
       rating REAL,
       reviews INTEGER,
       features TEXT, -- JSON-строка с массивом фич
-      link TEXT
+      link TEXT,
+      hours TEXT,
+      phone TEXT
     )
   `);
 
@@ -213,6 +227,11 @@ db.serialize(() => {
           }
         );
       }
+      const hasHours = columns.some((c) => c.name === "hours");
+      if (!hasHours) db.run("ALTER TABLE places ADD COLUMN hours TEXT");
+
+      const hasPhone = columns.some((c) => c.name === "phone");
+      if (!hasPhone) db.run("ALTER TABLE places ADD COLUMN phone TEXT");
     }
   });
 
@@ -234,8 +253,8 @@ db.serialize(() => {
 
         const insertSql = `
           INSERT INTO places
-            (id, name, type, city, address, image, images, badge, rating, reviews, features, link)
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            (name, type, city, address, image, images, badge, rating, reviews, features, link, hours, phone)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         `;
 
         const stmt = db.prepare(insertSql);
@@ -297,6 +316,8 @@ function mapPlaceRow(row) {
     reviews: row.reviews,
     features,
     link: row.link,
+    hours: row.hours || null,
+    phone: row.phone || null,
   };
 }
 
@@ -375,7 +396,7 @@ app.post("/api/login", (req, res) => {
 // ===================== РЕГИСТРАЦИЯ: ШАГ 1 =====================
 
 app.post("/api/register/start", (req, res) => {
-  const { login, password, firstName, lastName, city, email, status } = req.body;
+  const { login, password, firstName, lastName, city, email, status, hours, phone} = req.body;
 
   if (!login || !password) {
     return res.status(400).json({
@@ -564,7 +585,10 @@ app.get("/api/places", (req, res) => {
       });
     }
 
-    const places = (rows || []).map(mapPlaceRow);
+    const places = (rows || [])
+      .map(mapPlaceRow)
+      .map((p) => enrichPlaceForClient(p, req));
+  
     res.json({ ok: true, places });
   });
 });
@@ -572,17 +596,8 @@ app.get("/api/places", (req, res) => {
 // Добавить место
 app.post("/api/places", (req, res) => {
   const {
-    name,
-    type,
-    city,
-    address,
-    image,
-    images,
-    badge,
-    rating,
-    reviews,
-    features,
-    link,
+    name, type, city, address, image, images, badge, rating, reviews, features, link,
+    hours, phone, 
   } = req.body;
 
   if (!name || !name.trim()) {
@@ -597,8 +612,8 @@ app.post("/api/places", (req, res) => {
 
   const sql = `
     INSERT INTO places
-      (name, type, city, address, image, images, badge, rating, reviews, features, link)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      (name, type, city, address, image, images, badge, rating, reviews, features, link, hours, phone)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `;
 
   db.run(
@@ -615,6 +630,8 @@ app.post("/api/places", (req, res) => {
       reviews ?? null,
       featuresJson,
       link || null,
+      hours || null,
+      phone || null,
     ],
     function (err) {
       if (err) {
@@ -650,17 +667,8 @@ app.put("/api/places/:id", (req, res) => {
   }
 
   const {
-    name,
-    type,
-    city,
-    address,
-    image,
-    images,
-    badge,
-    rating,
-    reviews,
-    features,
-    link,
+    name, type, city, address, image, images, badge, rating, reviews, features, link,
+    hours, phone, 
   } = req.body;
 
   if (!name || !name.trim()) {
@@ -686,7 +694,9 @@ app.put("/api/places/:id", (req, res) => {
       rating = ?,
       reviews = ?,
       features = ?,
-      link = ?
+      link = ?,
+      hours = ?,
+      phone = ?
     WHERE id = ?
   `;
 
@@ -704,6 +714,8 @@ app.put("/api/places/:id", (req, res) => {
       reviews ?? null,
       featuresJson,
       link || null,
+      hours || null,
+      phone || null,
       id,
     ],
     function (err) {
@@ -726,9 +738,10 @@ app.put("/api/places/:id", (req, res) => {
         if (err2 || !row) {
           return res.json({ ok: true });
         }
+        const place = mapPlaceRow(row);
         res.json({
           ok: true,
-          place: mapPlaceRow(row),
+          place: enrichPlaceForClient(place, req),
         });
       });
     }

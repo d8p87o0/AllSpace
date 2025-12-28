@@ -127,40 +127,43 @@
   flex: 1 0 auto;
 }
 
-/* hero, min-height: 100% экрана */
 .hero {
   position: relative;
   min-height: 100vh;
   padding-top: var(--header-height);
+  overflow: hidden;
+
   display: flex;
   align-items: center;
   justify-content: center;
-  color: var(--white);
-  text-align: center;
 
-  /* новая картинка */
-  background-image: url("/hero-bg.png");
-  background-size: cover;
-  background-position: center;
-  background-repeat: no-repeat;
+  text-align: center;
+  color: #fff;
+}
+
+/* hero, min-height: 100% экрана */
+.hero__bg-video {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  z-index: 0;
 }
 
 .hero__overlay {
   position: absolute;
   inset: 0;
-  background: linear-gradient(
-    180deg,
-    rgba(15, 23, 42, 0.65) 0%,
-    rgba(15, 23, 42, 0.4) 40%,
-    rgba(15, 23, 42, 0.2) 100%
-  );
+  background: rgba(0, 0, 0, 0.45);
+  z-index: 1;
 }
 
 .hero__content {
   position: relative;
-  z-index: 1;
+  z-index: 2;
   padding: 48px 0 40px;
 }
+
 
 .hero__title {
   font-size: 80px;
@@ -1426,23 +1429,6 @@
 
 /* Галерея */
 
-.place-page__gallery {
-  margin-bottom: 24px;
-}
-
-.place-page__gallery-main {
-  border-radius: 24px;
-  overflow: hidden;
-  background-color: #000;
-  position: relative;
-}
-
-.place-page__gallery-main-img {
-  width: 100%;
-  height: 320px;
-  object-fit: cover;
-  display: block;
-}
 
 .place-page__gallery-thumbs {
   margin-top: 12px;
@@ -1761,6 +1747,7 @@
   gap: 8px;
   font-size: 14px;
   color: #4b5563;
+  padding-bottom: 25px;
 }
 
 .place-sidecard__row {
@@ -2076,12 +2063,35 @@
   padding: 0 72px 0 56px;
 }
 
+/* Главная фотка в карточке места — 3:4 */
+/* Главная фотка в карточке места — 3:4 + кроп */
+/* Главная картинка: фиксированный размер 704×452 + кроп */
 .place-page__gallery-frame {
   position: relative;
+  width: 704px;
+  height: 452px;
+  overflow: hidden;
+  border-radius: 25px;
+  background: #e5e7eb;
+}
+
+/* чтобы на узких экранах не вылезало за контейнер */
+.place-page__gallery-frame {
+  max-width: 100%;
 }
 
 .place-page__gallery-main {
-  position: static;
+  width: 100%;
+  height: 100%;
+  cursor: zoom-in;
+}
+
+.place-page__gallery-main-img {
+  width: 100%;
+  height: 100%;
+  display: block;
+  object-fit: cover;        /* кроп */
+  object-position: center;
 }
 
 .place-page__gallery-thumbs {
@@ -2984,9 +2994,6 @@
   padding: 0;
 }
 
-.place-page__gallery-frame {
-  position: relative;
-}
 
 /* Стрелки перелистывания в основной галерее */
 .place-page__gallery-arrow {
@@ -3071,4 +3078,28 @@
   height: 60px;
   object-fit: cover;
   display: block;
+}
+
+/* ===== FIX: убираем нижнюю полосу, картинка заполняет кадр ===== */
+
+.place-page__gallery-frame {
+  position: relative !important;
+  width: min(704px, 100%) !important;
+  aspect-ratio: 704 / 452 !important;
+  height: auto !important;
+  overflow: hidden !important;
+}
+
+.place-page__gallery-main {
+  position: absolute !important;
+  inset: 0 !important;
+  width: 100% !important;
+  height: 100% !important;
+}
+
+.place-page__gallery-main-img {
+  width: 100% !important;
+  height: 100% !important;     /* важно */
+  display: block !important;
+  object-fit: cover !important; /* увеличиваем и обрезаем */
 }

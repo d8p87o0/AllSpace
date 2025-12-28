@@ -39,7 +39,7 @@ const FEATURE_CONFIG = {
     text: "Удобная мебель и приятная атмосфера для работы и встреч.",
   },
   "wi-fi": {
-    icon: "/wi-fi-reature.svg", // как ты и написал
+    icon: "/wi-fi-feature.svg", // как ты и написал
     label: "Быстрый Wi-Fi",
     text: "Стабильное подключение для звонков и онлайн-работы.",
   },
@@ -93,6 +93,34 @@ function buildGalleryImages(src) {
     images.push(`${base}${i}${ext}`);
   }
   return images;
+}
+
+function resolveMediaUrl(url) {
+  if (!url) return url;
+
+  // абсолютные ссылки не трогаем
+  if (/^https?:\/\//i.test(url)) return url;
+
+  // если это локальная статика сервера: /photos/...
+  if (url.startsWith("/photos/")) return `${API_BASE}${url}`;
+
+  // любые другие относительные пути оставляем как есть (например /p1p1.png из public)
+  return url;
+}
+
+function normalizePhoneForLink(phone) {
+  if (!phone) return null;
+  const cleaned = String(phone).replace(/[^\d+]/g, "");
+  return cleaned || null;
+}
+
+function hoursToLines(hours) {
+  if (!hours) return [];
+  return String(hours)
+    .replace(/\r/g, "\n")
+    .split("\n")
+    .map((l) => l.trim())
+    .filter(Boolean);
 }
 
 export default function PlacePage() {
@@ -213,6 +241,7 @@ export default function PlacePage() {
 
     const fallback = () => {
       const generated = buildGalleryImages(place.image);
+      
       if (generated.length) {
         setGalleryImages(generated);
       } else if (place.image) {
@@ -221,6 +250,29 @@ export default function PlacePage() {
         setGalleryImages([]);
       }
     };
+
+    function resolveMediaUrl(url) {
+      if (!url) return url;
+      // если URL начинается с /photos/... — это лежит на API (3001), а не на Vite (5173)
+      if (url.startsWith("/photos/")) return `${API_BASE}${url}`;
+      return url;
+    }
+    
+    function normalizePhoneForLink(phone) {
+      if (!phone) return null;
+      // оставим + и цифры
+      const cleaned = String(phone).replace(/[^\d+]/g, "");
+      return cleaned || null;
+    }
+    
+    function hoursToLines(hours) {
+      if (!hours) return [];
+      return String(hours)
+        .replace(/\r/g, "\n")
+        .split("\n")
+        .map((l) => l.trim())
+        .filter(Boolean);
+    }
 
     // 1) Если у места есть images из БД — используем их
     if (Array.isArray(place.images) && place.images.length) {
@@ -269,8 +321,9 @@ export default function PlacePage() {
   const details = PLACE_DETAILS[placeId] || PLACE_DETAILS.default;
   const placeReviews = reviewsData.filter((r) => r.placeId === placeId);
 
-  const mainImage =
-    galleryImages[activeIndex] || galleryImages[0] || place.image;
+  const mainImage = resolveMediaUrl(
+    galleryImages[activeIndex] || galleryImages[0] || place.image
+  );
 
   const hasYandexLink = Boolean(place.link);
   const mapSrc = hasYandexLink
@@ -368,16 +421,14 @@ export default function PlacePage() {
               {/* Галерея */}
               <div className="place-page__gallery">
                 <div className="place-page__gallery-frame">
-                  <div
-                    className="place-page__gallery-main"
-                    onClick={openLightbox}
-                  >
+                  <div className="place-page__gallery-main" onClick={openLightbox}>
                     <img
                       src={mainImage}
                       alt={place.name}
                       className="place-page__gallery-main-img"
                     />
                   </div>
+
                   <button
                     type="button"
                     className="place-page__gallery-arrow place-page__gallery-arrow--left"
@@ -390,6 +441,7 @@ export default function PlacePage() {
                   >
                     ‹
                   </button>
+
                   <button
                     type="button"
                     className="place-page__gallery-arrow place-page__gallery-arrow--right"
@@ -411,14 +463,12 @@ export default function PlacePage() {
                       type="button"
                       className={
                         "place-page__thumb-btn" +
-                        (index === activeIndex
-                          ? " place-page__thumb-btn--active"
-                          : "")
+                        (index === activeIndex ? " place-page__thumb-btn--active" : "")
                       }
                       onClick={() => handleThumbClick(index)}
                     >
                       <img
-                        src={src}
+                        src={resolveMediaUrl(src)}
                         alt={`${place.name} #${index + 1}`}
                         className="place-page__thumb-img"
                       />
@@ -584,22 +634,65 @@ export default function PlacePage() {
             </div>
 
             {/* ПРАВАЯ КОЛОНКА */}
+            {/* ПРАВАЯ КОЛОНКА */}
             <aside className="place-page__sidebar">
+              {/* Время работы — из БД */}
               <div className="place-sidecard">
                 <h3 className="place-sidecard__title">Время работы</h3>
 
-                <div className="place-sidecard__rows">
-                  <div className="place-sidecard__row">
-                    <span>Пн–Пт</span>
-                    <span>8:00 – 22:00</span>
+                {hoursToLines(place.hours).length ? (
+                  <div className="place-sidecard__rows">
+                    {hoursToLines(place.hours).map((line, idx) => (
+                      <div className="place-sidecard__row" key={idx}>
+                        <span>{line}</span>
+                      </div>
+                    ))}
                   </div>
-                  <div className="place-sidecard__row">
-                    <span>Сб–Вс</span>
-                    <span>10:00 – 23:00</span>
+                ) : (
+                  <div className="place-sidecard__rows">
+                    <div className="place-sidecard__row">
+                      <span>Расписание не указано</span>
+                    </div>
                   </div>
-                </div>
+                )}
               </div>
 
+              {/* Контакты */}
+              <div className="place-sidecard">
+                <h3 className="place-sidecard__title">Контакты</h3>
+
+                <div className="place-sidecard__rows">
+                  <div className="place-sidecard__row">
+                    <span>{place.address}</span>
+                  </div>
+
+                  {place.phone ? (
+                    <div className="place-sidecard__row">
+                      <a
+                        href={`tel:${normalizePhoneForLink(place.phone) || ""}`}
+                        className="place-sidecard__link"
+                      >
+                        {place.phone}
+                      </a>
+                    </div>
+                  ) : (
+                    <div className="place-sidecard__row">
+                      <span>Телефон не указан</span>
+                    </div>
+                  )}
+                </div>
+
+                {place.phone && (
+                  <a
+                    className="place-sidecard__route-btn"
+                    href={`sms:${normalizePhoneForLink(place.phone)}`}
+                  >
+                    Написать
+                  </a>
+                )}
+              </div>
+
+              {/* Адрес + карта + маршрут + избранное */}
               <div className="place-sidecard">
                 <h3 className="place-sidecard__title">Адрес</h3>
                 <p className="place-sidecard__address">
@@ -616,9 +709,7 @@ export default function PlacePage() {
                       allowFullScreen
                     />
                   ) : (
-                    <div className="place-sidecard__map-placeholder">
-                      Карта недоступна
-                    </div>
+                    <div className="place-sidecard__map-placeholder">Карта недоступна</div>
                   )}
                 </div>
 

@@ -16,6 +16,8 @@ const emptyForm = {
   reviews: "",
   featuresText: "",
   link: "",
+  hours: "", 
+  phone: "", 
 };
 
 export default function AdminPage() {
@@ -52,6 +54,8 @@ export default function AdminPage() {
    * { id, url, order, toDelete, isNew, file, previewUrl }
    */
   const [editImages, setEditImages] = useState([]);
+  // === images: для создания нового места ===
+  const [createImages, setCreateImages] = useState([]);
   const placesListRef = useRef(null);
   // Флаг, чтобы восстановить выбор после загрузки только один раз
   const selectionRestoredRef = useRef(false);
@@ -169,6 +173,70 @@ export default function AdminPage() {
     }
   }, [places, selectedPlaceId]);
 
+  // === images: работа с карточками (CREATE) ===
+
+  const handleCreateImageOrderChange = (id, newOrder) => {
+    setCreateImages((prev) =>
+      prev.map((img) => (img.id === id ? { ...img, order: newOrder } : img))
+    );
+  };
+
+  const markCreateImageForDelete = (id) => {
+    setCreateImages((prev) =>
+      prev.map((img) => (img.id === id ? { ...img, toDelete: true } : img))
+    );
+  };
+
+  const undoCreateImageDelete = (id) => {
+    setCreateImages((prev) =>
+      prev.map((img) => (img.id === id ? { ...img, toDelete: false } : img))
+    );
+  };
+
+  const handleCreateImageFiles = (filesList) => {
+    const files = Array.from(filesList || []);
+    if (!files.length) return;
+
+    setCreateImages((prev) => {
+      const maxOrder = prev.reduce(
+        (max, img) => Math.max(max, Number(img.order || 0)),
+        0
+      );
+      let currentOrder = maxOrder;
+
+      const newItems = files.map((file, idx) => {
+        currentOrder += 1;
+        return {
+          id: `create-new-${Date.now()}-${idx}`,
+          url: "",
+          order: currentOrder,
+          toDelete: false,
+          isNew: true,
+          file,
+          previewUrl: URL.createObjectURL(file),
+        };
+      });
+
+      return [...prev, ...newItems];
+    });
+  };
+
+  const handleCreateImageInputChange = (event) => {
+    if (event.target.files && event.target.files.length > 0) {
+      handleCreateImageFiles(event.target.files);
+      event.target.value = "";
+    }
+  };
+
+  const handleCreateImageDrop = (event) => {
+    event.preventDefault();
+    if (event.dataTransfer.files && event.dataTransfer.files.length > 0) {
+      handleCreateImageFiles(event.dataTransfer.files);
+      event.dataTransfer.clearData();
+    }
+  };
+
+
   const handleSelectPlace = async (place) => {
     setSelectedPlaceId(place.id);
   
@@ -191,6 +259,8 @@ export default function AdminPage() {
       reviews: place.reviews != null ? String(place.reviews) : "",
       featuresText: (place.features || []).join(", "),
       link: place.link || "",
+      hours: place.hours || "",
+      phone: place.phone || "",
     });
   
     // пока грузим — очистим, чтобы не мигало старое
@@ -302,17 +372,15 @@ export default function AdminPage() {
   };
 
   // helper: загрузка новых файлов на сервер
-  const uploadNewImagesIfNeeded = async () => {
-    const newImages = editImages.filter(
+  // helper: загрузка новых файлов на сервер (универсально для edit/create)
+  const uploadNewImages = async (images) => {
+    const newImages = (images || []).filter(
       (img) => img.isNew && img.file && !img.toDelete
     );
-
     if (!newImages.length) return [];
 
     const formData = new FormData();
-    newImages.forEach((img) => {
-      formData.append("files", img.file);
-    });
+    newImages.forEach((img) => formData.append("files", img.file));
 
     const res = await fetch(`${API_BASE}/api/upload`, {
       method: "POST",
@@ -320,11 +388,8 @@ export default function AdminPage() {
     });
 
     const data = await res.json();
-    if (!data.ok) {
-      throw new Error(data.message || "Не удалось загрузить изображения");
-    }
+    if (!data.ok) throw new Error(data.message || "Не удалось загрузить изображения");
 
-    // Ожидаем, что сервер вернёт массив ссылок в том же порядке
     return data.urls || [];
   };
 
@@ -337,7 +402,7 @@ export default function AdminPage() {
 
     try {
       // 1) Загружаем все новые картинки (isNew)
-      const uploadedUrls = await uploadNewImagesIfNeeded();
+      const uploadedUrls = await uploadNewImages(editImages);
       let uploadIndex = 0;
 
       // 2) Формируем финальный список картинок без помеченных на удаление
@@ -372,6 +437,8 @@ export default function AdminPage() {
         reviews: editForm.reviews ? Number(editForm.reviews) : null,
         features: parseFeatures(editForm.featuresText),
         link: editForm.link.trim(),
+        hours: editForm.hours.trim() || null,
+        phone: editForm.phone.trim() || null,
       };
 
       const res = await fetch(`${API_BASE}/api/places/${selectedPlaceId}`, {
@@ -402,43 +469,70 @@ export default function AdminPage() {
 
   const submitCreate = async (event) => {
     event.preventDefault();
-
+  
     setError("");
     setSuccess("");
-
-    const body = {
-      name: createForm.name.trim(),
-      type: createForm.type.trim(),
-      city: createForm.city.trim(),
-      address: createForm.address.trim(),
-      image: createForm.image.trim(),
-      badge: createForm.badge.trim(),
-      rating: createForm.rating ? Number(createForm.rating) : null,
-      reviews: createForm.reviews ? Number(createForm.reviews) : null,
-      features: parseFeatures(createForm.featuresText),
-      link: createForm.link.trim(),
-    };
-
+  
     try {
+      // 1) Загружаем выбранные фото (если есть)
+      const uploadedUrls = await uploadNewImages(createImages);
+      let uploadIndex = 0;
+  
+      // 2) Собираем финальный список картинок
+      const finalImages = createImages
+        .filter((img) => !img.toDelete)
+        .map((img) => {
+          if (img.isNew) {
+            const url = uploadedUrls[uploadIndex++];
+            return { ...img, url };
+          }
+          return img;
+        })
+        .filter((img) => img.url);
+  
+      finalImages.sort((a, b) => Number(a.order || 0) - Number(b.order || 0));
+      const imagesForServer = finalImages.map((img) => img.url);
+  
+      // 3) Формируем body
+      const body = {
+        name: createForm.name.trim(),
+        type: createForm.type.trim(),
+        city: createForm.city.trim(),
+        address: createForm.address.trim(),
+  
+        // главная картинка — первая загруженная, иначе то, что ввели вручную
+        image: imagesForServer[0] || createForm.image.trim(),
+        images: imagesForServer, // галерея
+  
+        badge: createForm.badge.trim(),
+        rating: createForm.rating ? Number(createForm.rating) : null,
+        reviews: createForm.reviews ? Number(createForm.reviews) : null,
+        features: parseFeatures(createForm.featuresText),
+        link: createForm.link.trim(),
+        hours: createForm.hours.trim() || null,
+        phone: createForm.phone.trim() || null,
+      };
+  
       const res = await fetch(`${API_BASE}/api/places`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(body),
       });
-
+  
       const data = await res.json();
-
+  
       if (!data.ok) {
         setError(data.message || "Не удалось добавить место");
         return;
       }
-
+  
       setSuccess("Место добавлено");
       setCreateForm(emptyForm);
+      setCreateImages([]);
       await loadPlaces();
     } catch (e) {
       console.error("Ошибка добавления места:", e);
-      setError("Ошибка соединения с сервером");
+      setError(e.message || "Ошибка соединения с сервером");
     }
   };
 
@@ -497,13 +591,13 @@ export default function AdminPage() {
           </div>
 
           <div className="admin__header-actions">
-            <button
-              type="button"
-              className="admin__back-btn"
-              onClick={() => navigate("/")}
-            >
-              На сайт
-            </button>
+          <button
+            type="button"
+            className="admin__back-btn"
+            onClick={goToSite}
+          >
+            На сайт
+          </button>
 
             <button
               type="button"
@@ -652,6 +746,23 @@ export default function AdminPage() {
                       className="admin-input"
                       placeholder="Ссылка на Яндекс.Карты"
                       value={editForm.link}
+                      onChange={handleEditChange}
+                    />
+                    <input
+                      type="text"
+                      name="phone"
+                      className="admin-input"
+                      placeholder="Телефон (например: +7 999 123-45-67)"
+                      value={editForm.phone}
+                      onChange={handleEditChange}
+                    />
+
+                    <input
+                      type="text"
+                      name="hours"
+                      className="admin-input"
+                      placeholder="График работы (например: Пн–Пт 09:00–21:00)"
+                      value={editForm.hours}
                       onChange={handleEditChange}
                     />
                   </div>
@@ -855,8 +966,104 @@ export default function AdminPage() {
                     value={createForm.link}
                     onChange={handleCreateChange}
                   />
-                </div>
+                  <input
+                    type="text"
+                    name="phone"
+                    className="admin-input"
+                    placeholder="Телефон (например: +7 999 123-45-67)"
+                    value={createForm.phone}
+                    onChange={handleCreateChange}
+                  />
 
+                  <input
+                    type="text"
+                    name="hours"
+                    className="admin-input"
+                    placeholder="График работы (например: Пн–Пт 09:00–21:00)"
+                    value={createForm.hours}
+                    onChange={handleCreateChange}
+                  />
+                </div>
+                {/* === Блок картинок (CREATE) === */}
+                <div className="admin-images">
+                  <div className="admin-images__header">
+                    <span>Фотографии</span>
+                    <span className="admin-images__hint">
+                      Перетаскивай, кликай, меняй порядок
+                    </span>
+                  </div>
+
+                  <div className="admin-images__grid">
+                    {createImages.map((img) => {
+                      const preview = img.previewUrl || img.url;
+                      if (!preview) return null;
+
+                      return (
+                        <div
+                          key={img.id}
+                          className={
+                            "admin-image-card" + (img.toDelete ? " admin-image-card--deleted" : "")
+                          }
+                        >
+                          <div className="admin-image-card__thumb-wrap">
+                            <img src={preview} alt="" className="admin-image-card__thumb" />
+
+                            <div className="admin-image-card__index-badge">
+                              <input
+                                type="number"
+                                min="1"
+                                className="admin-image-card__index-input"
+                                value={img.order ?? ""}
+                                onChange={(e) =>
+                                  handleCreateImageOrderChange(img.id, Number(e.target.value) || 1)
+                                }
+                              />
+                            </div>
+
+                            {!img.toDelete && (
+                              <button
+                                type="button"
+                                className="admin-image-card__remove"
+                                onClick={() => markCreateImageForDelete(img.id)}
+                              >
+                                ×
+                              </button>
+                            )}
+                          </div>
+
+                          {img.toDelete && (
+                            <button
+                              type="button"
+                              className="admin-image-card__undo"
+                              onClick={() => undoCreateImageDelete(img.id)}
+                            >
+                              Отменить удаление
+                            </button>
+                          )}
+                        </div>
+                      );
+                    })}
+
+                    {/* Карточка добавления новых фото */}
+                    <label
+                      className="admin-image-add"
+                      onDragOver={(e) => e.preventDefault()}
+                      onDrop={handleCreateImageDrop}
+                    >
+                      <input
+                        type="file"
+                        accept="image/*"
+                        multiple
+                        className="admin-image-add__input"
+                        onChange={handleCreateImageInputChange}
+                      />
+                      <div className="admin-image-add__icon">+</div>
+                      <div className="admin-image-add__text">
+                        Перетащите фото или нажмите, чтобы выбрать
+                      </div>
+                    </label>
+                  </div>
+                </div>
                 <label className="admin-label">
                   Удобства (через запятую)
                   <textarea
