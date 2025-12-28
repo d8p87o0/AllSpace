@@ -584,7 +584,6 @@ function App() {
                   </div>
                 </section>
 
-                {/* Преимущества */}
                 <section className="features">
                   <div className="container features__grid">
                     <div className="feature-card">
