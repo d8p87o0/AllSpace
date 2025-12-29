@@ -1,8 +1,6 @@
 // src/PlacePage.jsx
 import { useEffect, useState } from "react";
 import { useParams, useNavigate } from "react-router-dom";
-import reviewsData from "./reviews.json";
-import usersData from "./users.json";
 
 const API_BASE = "http://localhost:3001";
 const FAVORITES_PREFIX = "favoritePlaces_";
@@ -77,6 +75,18 @@ function getInitials(name) {
   return (first + second).toUpperCase();
 }
 
+function formatReviewDate(value) {
+  if (!value) return "";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return String(value);
+
+  return date.toLocaleDateString("ru-RU", {
+    day: "numeric",
+    month: "short",
+    year: "numeric",
+  });
+}
+
 // Строим список картинок p1p1.png … p1p6.png по имени первой
 function buildGalleryImages(src) {
   if (!src) return [];
@@ -137,6 +147,15 @@ export default function PlacePage() {
   const [isLightboxOpen, setIsLightboxOpen] = useState(false);
   const [isFavorite, setIsFavorite] = useState(false);
   const [galleryImages, setGalleryImages] = useState([]);
+  const [reviews, setReviews] = useState([]);
+  const [reviewsLoading, setReviewsLoading] = useState(false);
+  const [reviewsError, setReviewsError] = useState("");
+  const [reviewText, setReviewText] = useState("");
+  const [reviewRating, setReviewRating] = useState(5);
+  const [reviewSubmitting, setReviewSubmitting] = useState(false);
+  const [submitMessage, setSubmitMessage] = useState("");
+  const [isReviewFormOpen, setIsReviewFormOpen] = useState(false);
+
 
   const getFavoritesKey = (login) => `${FAVORITES_PREFIX}${login}`;
 
@@ -232,6 +251,74 @@ export default function PlacePage() {
     };
   }, [placeId]);
 
+  useEffect(() => {
+    setReviewText("");
+    setReviewRating(5);
+    setSubmitMessage("");
+    setIsReviewFormOpen(false);
+
+    if (!Number.isFinite(placeId)) {
+      setReviews([]);
+      setReviewsError("Некорректный id");
+      return;
+    }
+
+    let cancelled = false;
+
+    const loadReviews = async () => {
+      setReviewsLoading(true);
+      setReviewsError("");
+      setSubmitMessage("");
+
+      try {
+        const res = await fetch(`${API_BASE}/api/places/${placeId}/reviews`);
+        const data = await res.json();
+
+        if (!data.ok) {
+          throw new Error(data.message || "Не удалось загрузить отзывы");
+        }
+
+        if (!cancelled) {
+          const list = Array.isArray(data.reviews) ? data.reviews : [];
+          setReviews(list);
+
+          if (data.stats) {
+            setPlace((prev) =>
+              prev
+                ? {
+                    ...prev,
+                    rating:
+                      data.stats.average === undefined
+                        ? prev.rating
+                        : data.stats.average,
+                    reviews:
+                      data.stats.count === undefined
+                        ? prev.reviews
+                        : data.stats.count,
+                  }
+                : prev
+            );
+          }
+        }
+      } catch (e) {
+        if (!cancelled) {
+          setReviewsError(e.message || "Ошибка загрузки отзывов");
+          setReviews([]);
+        }
+      } finally {
+        if (!cancelled) {
+          setReviewsLoading(false);
+        }
+      }
+    };
+
+    loadReviews();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [placeId]);
+
   // загрузка фото для галереи
   useEffect(() => {
     if (!place) {
@@ -319,7 +406,6 @@ export default function PlacePage() {
   }
 
   const details = PLACE_DETAILS[placeId] || PLACE_DETAILS.default;
-  const placeReviews = reviewsData.filter((r) => r.placeId === placeId);
 
   const mainImage = resolveMediaUrl(
     galleryImages[activeIndex] || galleryImages[0] || place.image
@@ -404,9 +490,108 @@ export default function PlacePage() {
     }
   };
 
-  const hasRating = typeof place.rating === "number";
-  const ratingValue = hasRating ? place.rating.toFixed(1) : "—";
-  const reviewsCount = place.reviews ?? 0;
+  const handleReviewButtonClick = () => {
+    if (!user) {
+      navigate("/login");
+      return;
+    }
+
+    setIsReviewFormOpen(true);
+  };
+
+  const handleReviewSubmit = async (event) => {
+    event.preventDefault();
+
+    if (!user) {
+      navigate("/login");
+      return;
+    }
+
+    const text = reviewText.trim();
+    const ratingValue = Number(reviewRating);
+
+    if (!text) {
+      setSubmitMessage("Добавьте текст отзыва");
+      return;
+    }
+
+    if (!Number.isInteger(ratingValue) || ratingValue < 1 || ratingValue > 5) {
+      setSubmitMessage("Оценка должна быть от 1 до 5");
+      return;
+    }
+
+    setReviewSubmitting(true);
+    setSubmitMessage("");
+
+    try {
+      const payload = {
+        userLogin: user.login,
+        userName:
+          `${user.firstName || ""} ${user.lastName || ""}`.trim() ||
+          user.login,
+        text,
+        rating: ratingValue,
+      };
+
+      const res = await fetch(`${API_BASE}/api/places/${placeId}/reviews`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(payload),
+      });
+
+      const data = await res.json();
+      if (!data.ok) {
+        throw new Error(data.message || "Не удалось отправить отзыв");
+      }
+
+      if (data.review) {
+        setReviews((prev) => [data.review, ...prev]);
+      }
+
+      if (data.stats) {
+        setPlace((prev) =>
+          prev
+            ? {
+                ...prev,
+                rating:
+                  data.stats.average === undefined
+                    ? prev.rating
+                    : data.stats.average,
+                reviews:
+                  data.stats.count === undefined
+                    ? prev.reviews
+                    : data.stats.count,
+              }
+            : prev
+        );
+      }
+
+      setReviewText("");
+      setReviewRating(5);
+      setSubmitMessage("Отзыв отправлен");
+      setIsReviewFormOpen(true);
+    } catch (e) {
+      setSubmitMessage(e.message || "Не удалось отправить отзыв");
+    } finally {
+      setReviewSubmitting(false);
+    }
+  };
+
+  const ratingSource =
+    typeof place.rating === "number" && !Number.isNaN(place.rating)
+      ? place.rating
+      : reviews.length
+      ? reviews.reduce((acc, r) => acc + Number(r.rating || 0), 0) / reviews.length
+      : null;
+
+  const hasRating =
+    typeof ratingSource === "number" && !Number.isNaN(ratingSource);
+  const ratingValue = hasRating ? ratingSource.toFixed(1) : "-";
+  const reviewsCount = place.reviews ?? reviews.length ?? 0;
+  const submitSuccessText = "Отзыв отправлен";
+  const isSubmitError = submitMessage && submitMessage !== submitSuccessText;
   const isFirstImage = activeIndex === 0;
   const isLastImage =
     !galleryImages.length || activeIndex === galleryImages.length - 1;
@@ -559,77 +744,134 @@ export default function PlacePage() {
               {/* Отзывы */}
               <section className="place-page__section">
                 <div className="place-page__section-header">
-                  <h2 className="place-page__section-title">Отзывы</h2>
+                  <h2 className="place-page__section-title">{"Отзывы"}</h2>
                   <button
                     type="button"
                     className="place-page__reviews-btn"
-                    onClick={() => alert("Здесь позже будет форма отзыва")}
+                    onClick={handleReviewButtonClick}
                   >
-                    Оставить отзыв
+                    {"Оставить отзыв"}
                   </button>
                 </div>
 
-                <div className="place-page__reviews-list">
-                  {placeReviews.map((review) => {
-                    const user = usersData.find(
-                      (u) => u.id === review.userId
-                    );
-                    const initials = getInitials(user?.name);
+                {isReviewFormOpen && (
+                  <form className="review-form" onSubmit={handleReviewSubmit}>
+                    <div className="review-form__row">
+                      <span className="review-form__label">{"Ваша оценка:"}</span>
+                      <div className="review-form__stars">
+                        {[1, 2, 3, 4, 5].map((value) => (
+                          <button
+                            key={value}
+                            type="button"
+                            className={
+                              "review-form__star" +
+                              (value <= reviewRating
+                                ? " review-form__star--active"
+                                : "")
+                            }
+                            onClick={() => setReviewRating(value)}
+                          >
+                            ★
+                          </button>
+                        ))}
+                        <span className="review-form__hint">{reviewRating}/5</span>
+                      </div>
+                    </div>
 
-                    return (
-                      <article key={review.id} className="review-card">
-                        <div className="review-card__header">
-                          <div className="review-card__user">
-                            <div className="review-card__avatar">
-                              {initials}
-                            </div>
-                            <div>
-                              <div className="review-card__name">
-                                {user?.name || "Пользователь"}
-                              </div>
-                              {user?.role && (
-                                <div className="review-card__role">
-                                  {user.role}
-                                </div>
-                              )}
-                            </div>
-                          </div>
+                    <textarea
+                      className="review-form__textarea"
+      placeholder="Расскажите о впечатлениях"
+                      value={reviewText}
+                      onChange={(e) => setReviewText(e.target.value)}
+                      rows={3}
+                      maxLength={1000}
+                    />
 
-                          <div className="review-card__meta">
-                            <div className="review-card__stars">
-                              {"★".repeat(review.rating)}
-                              {"☆".repeat(5 - review.rating)}
-                            </div>
-                            <div className="review-card__date">
-                              {review.date}
-                            </div>
-                          </div>
-                        </div>
+                    <div className="review-form__actions">
+                      <button
+                        type="submit"
+                        className="review-form__submit"
+                        disabled={reviewSubmitting}
+                      >
+                        {reviewSubmitting ? "Отправляем..." : "Опубликовать"}
+                      </button>
 
-                        <p className="review-card__text">{review.text}</p>
-
-                        <button
-                          type="button"
-                          className="review-card__more-btn"
-                          onClick={() =>
-                            alert(
-                              "Тут будет раскрытие дополнительных комментариев"
-                            )
+                      {submitMessage && (
+                        <span
+                          className={
+                            "review-form__message" +
+                            (isSubmitError ? " review-form__message--error" : "")
                           }
                         >
-                          Показать следующие комментарии
-                        </button>
-                      </article>
-                    );
-                  })}
+                          {submitMessage}
+                        </span>
+                      )}
+                    </div>
+                  </form>
+                )}
 
-                  {placeReviews.length === 0 && (
-                    <p>
-                      Пока нет отзывов. Станьте первым, кто поделится
-                      впечатлением!
-                    </p>
-                  )}
-                </div>
+                {reviewsError && (
+                  <p className="review-form__message review-form__message--error">
+                    {reviewsError}
+                  </p>
+                )}
+
+                {reviewsLoading ? (
+                  <p>Загружаем отзывы...</p>
+                ) : (
+                  <div className="place-page__reviews-list">
+                    {reviews.map((review) => {
+                      const displayName = review.userName || review.userLogin || "Гость";
+                      const initials = getInitials(displayName);
+                      const safeRating = Math.max(
+                        0,
+                        Math.min(5, Number(review.rating) || 0)
+                      );
+                      const reviewDate = formatReviewDate(review.createdAt);
+
+                      return (
+                        <article key={review.id} className="review-card">
+                          <div className="review-card__header">
+                            <div className="review-card__user">
+                              <div className="review-card__avatar">
+                                {initials}
+                              </div>
+                              <div>
+                                <div className="review-card__name">
+                                  {displayName}
+                                </div>
+                                {review.userLogin && (
+                                  <div className="review-card__role">
+                                    {review.userLogin}
+                                  </div>
+                                )}
+                              </div>
+                            </div>
+
+                            <div className="review-card__meta">
+                              <div className="review-card__stars">
+                                {"★".repeat(safeRating)}
+                                {"☆".repeat(5 - safeRating)}
+                              </div>
+                              <div className="review-card__date">
+                                {reviewDate || "Сегодня"}
+                              </div>
+                            </div>
+                          </div>
+
+                          <p className="review-card__text">{review.text}</p>
+                        </article>
+                      );
+                    })}
+
+                    {reviews.length === 0 && !reviewsError && (
+                      <p>
+                        Пока нет отзывов. Будьте первым, кто поделится
+                        впечатлениями!
+                      </p>
+                    )}
+                  </div>
+                )}
               </section>
             </div>
 

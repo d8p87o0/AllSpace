@@ -205,6 +205,23 @@ db.serialize(() => {
       phone TEXT
     )
   `);
+  db.run(`
+    CREATE TABLE IF NOT EXISTS place_reviews (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      place_id INTEGER NOT NULL,
+      user_login TEXT,
+      user_name TEXT,
+      rating INTEGER NOT NULL CHECK (rating >= 1 AND rating <= 5),
+      text TEXT NOT NULL,
+      created_at INTEGER NOT NULL DEFAULT (strftime('%s','now')),
+      FOREIGN KEY (place_id) REFERENCES places(id) ON DELETE CASCADE
+    )
+  `);
+
+  db.run(
+    "CREATE INDEX IF NOT EXISTS idx_place_reviews_place_id ON place_reviews(place_id)"
+  );
+
 
   // 🔹 на случай старой БД — добавим колонку images, если её нет
   db.all("PRAGMA table_info(places)", (err, columns) => {
@@ -319,6 +336,48 @@ function mapPlaceRow(row) {
     hours: row.hours || null,
     phone: row.phone || null,
   };
+}
+
+function mapReviewRow(row) {
+  const createdAtSec = Number(row.created_at || 0);
+  const createdAt = createdAtSec
+    ? new Date(createdAtSec * 1000).toISOString()
+    : new Date().toISOString();
+
+  return {
+    id: row.id,
+    placeId: row.place_id,
+    userLogin: row.user_login || null,
+    userName: row.user_name || null,
+    rating: row.rating,
+    text: row.text,
+    createdAt,
+  };
+}
+
+function recalcPlaceRating(placeId, cb = () => {}) {
+  const sql = `
+    SELECT COUNT(*) AS cnt, AVG(rating) AS avgRating
+    FROM place_reviews
+    WHERE place_id = ?
+  `;
+
+  db.get(sql, [placeId], (err, row) => {
+    if (err) return cb(err);
+
+    const total = Number(row?.cnt ?? 0);
+    const avgRaw = row?.avgRating;
+    const avg =
+      avgRaw === null || avgRaw === undefined
+        ? null
+        : Math.round(Number(avgRaw) * 10) / 10;
+
+    db.run(
+      "UPDATE places SET rating = ?, reviews = ? WHERE id = ?",
+      [total > 0 ? avg : null, total, placeId],
+      (updateErr) => cb(updateErr, { total, average: total > 0 ? avg : null })
+    );
+  });
 }
 
 // ===================== SMTP НАСТРОЙКА =====================
@@ -797,6 +856,139 @@ app.get("/api/places/:id/photos", (req, res) => {
     const place = mapPlaceRow(row);
     const { photos, cover } = collectPlacePhotos(place, req);
     return res.json({ ok: true, photos, cover });
+  });
+});
+
+
+// ===================== PLACE REVIEWS =====================
+app.get("/api/places/:id/reviews", (req, res) => {
+  const placeId = Number(req.params.id);
+  if (!Number.isInteger(placeId)) {
+    return res.status(400).json({ ok: false, message: "Invalid id" });
+  }
+
+  db.get("SELECT id FROM places WHERE id = ?", [placeId], (placeErr, placeRow) => {
+    if (placeErr) {
+      console.error("DB error (check place for reviews):", placeErr);
+      return res.status(500).json({ ok: false, message: "DB error" });
+    }
+
+    if (!placeRow) {
+      return res.status(404).json({ ok: false, message: "Place not found" });
+    }
+
+    const sql = `
+      SELECT id, place_id, user_login, user_name, rating, text, created_at
+      FROM place_reviews
+      WHERE place_id = ?
+      ORDER BY created_at DESC, id DESC
+    `;
+
+    db.all(sql, [placeId], (err, rows) => {
+      if (err) {
+        console.error("DB error (get place reviews):", err);
+        return res.status(500).json({ ok: false, message: "DB error" });
+      }
+
+      recalcPlaceRating(placeId, (recalcErr, stats) => {
+        if (recalcErr) {
+          console.error("DB error (recalc place rating):", recalcErr);
+        }
+
+        const reviews = (rows || []).map(mapReviewRow);
+        const count = stats?.total ?? reviews.length ?? 0;
+        const average =
+          stats?.average ??
+          (reviews.length
+            ? Math.round(
+                (reviews.reduce((acc, r) => acc + Number(r.rating || 0), 0) /
+                  reviews.length) *
+                  10
+              ) / 10
+            : null);
+
+        res.json({
+          ok: true,
+          reviews,
+          stats: { count, average },
+        });
+      });
+    });
+  });
+});
+
+app.post("/api/places/:id/reviews", (req, res) => {
+  const placeId = Number(req.params.id);
+  if (!Number.isInteger(placeId)) {
+    return res.status(400).json({ ok: false, message: "Invalid id" });
+  }
+
+  const { userLogin, userName, text, rating } = req.body || {};
+  const normalizedText = (text || "").trim();
+  const ratingNumber = Number(rating);
+
+  if (!normalizedText) {
+    return res
+      .status(400)
+      .json({ ok: false, message: "Review text is required" });
+  }
+
+  if (!Number.isInteger(ratingNumber) || ratingNumber < 1 || ratingNumber > 5) {
+    return res
+      .status(400)
+      .json({ ok: false, message: "Rating must be from 1 to 5" });
+  }
+
+  db.get("SELECT id, name FROM places WHERE id = ?", [placeId], (placeErr, placeRow) => {
+    if (placeErr) {
+      console.error("DB error (check place before insert review):", placeErr);
+      return res.status(500).json({ ok: false, message: "DB error" });
+    }
+
+    if (!placeRow) {
+      return res.status(404).json({ ok: false, message: "Place not found" });
+    }
+
+    const createdAt = Math.floor(Date.now() / 1000);
+    const insertSql = `
+      INSERT INTO place_reviews (place_id, user_login, user_name, rating, text, created_at)
+      VALUES (?, ?, ?, ?, ?, ?)
+    `;
+
+    db.run(
+      insertSql,
+      [placeId, userLogin || null, userName || null, ratingNumber, normalizedText, createdAt],
+      function (err) {
+        if (err) {
+          console.error("DB error (insert review):", err);
+          return res.status(500).json({ ok: false, message: "DB error" });
+        }
+
+        const newId = this.lastID;
+        db.get(
+          "SELECT id, place_id, user_login, user_name, rating, text, created_at FROM place_reviews WHERE id = ?",
+          [newId],
+          (getErr, row) => {
+            if (getErr) {
+              console.error("DB error (fetch new review):", getErr);
+              return res.status(500).json({ ok: false, message: "DB error" });
+            }
+
+            recalcPlaceRating(placeId, (recalcErr, stats) => {
+              if (recalcErr) {
+                console.error("DB error (recalc after review insert):", recalcErr);
+              }
+
+              res.json({
+                ok: true,
+                review: row ? mapReviewRow(row) : null,
+                stats: stats || null,
+              });
+            });
+          }
+        );
+      }
+    );
   });
 });
 
