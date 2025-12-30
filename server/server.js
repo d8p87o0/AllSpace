@@ -162,6 +162,36 @@ function enrichPlaceForClient(place, req) {
 // ✅ статическая раздача фото
 app.use("/photos", express.static(path.join(__dirname, "photos")));
 
+
+// ===================== AVATARS =====================
+const avatarsRoot = path.join(__dirname, "avatars");
+if (!fs.existsSync(avatarsRoot)) {
+  fs.mkdirSync(avatarsRoot, { recursive: true });
+}
+
+// статическая раздача аватарок
+app.use("/avatars", express.static(avatarsRoot));
+
+// отдельный multer для аватаров (файл называется по userId)
+const avatarUpload = multer({
+  storage: multer.diskStorage({
+    destination(req, file, cb) {
+      cb(null, avatarsRoot);
+    },
+    filename(req, file, cb) {
+      const userId = String(req.params.id || "unknown");
+      const ext = (path.extname(file.originalname) || ".png").toLowerCase();
+      cb(null, `${userId}${ext}`); // например: 12.png
+    },
+  }),
+  fileFilter(req, file, cb) {
+    const ok = /\.(jpe?g|png|webp)$/i.test(file.originalname);
+    cb(ok ? null : new Error("Only jpg/png/webp allowed"), ok);
+  },
+  limits: { fileSize: 5 * 1024 * 1024 }, // 5MB
+});
+
+
 // 🔹 API загрузки фото: /api/upload
 app.post("/api/upload", upload.array("files", 20), (req, res) => {
   try {
@@ -186,7 +216,10 @@ app.post("/api/upload", upload.array("files", 20), (req, res) => {
 // ===================== PLACES: таблица и начальное наполнение =====================
 
 // создаём таблицу places, если её ещё нет
+// ===================== PLACES + USERS + REVIEWS: таблицы и миграции =====================
+
 db.serialize(() => {
+  // --- 1) Таблица PLACES ---
   db.run(`
     CREATE TABLE IF NOT EXISTS places (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -205,10 +238,14 @@ db.serialize(() => {
       phone TEXT
     )
   `);
+
+  // --- 2) Таблица PLACE_REVIEWS ---
+  // ВАЖНО: добавили user_id (связь с users)
   db.run(`
     CREATE TABLE IF NOT EXISTS place_reviews (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       place_id INTEGER NOT NULL,
+      user_id INTEGER,             -- ✅ связь с users.id
       user_login TEXT,
       user_name TEXT,
       rating INTEGER NOT NULL CHECK (rating >= 1 AND rating <= 5),
@@ -218,44 +255,119 @@ db.serialize(() => {
     )
   `);
 
+  // Индексы
   db.run(
     "CREATE INDEX IF NOT EXISTS idx_place_reviews_place_id ON place_reviews(place_id)"
   );
+  db.run(
+    "CREATE INDEX IF NOT EXISTS idx_place_reviews_user_id ON place_reviews(user_id)"
+  );
 
-
-  // 🔹 на случай старой БД — добавим колонку images, если её нет
+  // --- 3) МИГРАЦИИ PLACES: добавляем недостающие колонки ---
   db.all("PRAGMA table_info(places)", (err, columns) => {
     if (err) {
       console.error("Ошибка PRAGMA table_info(places):", err);
-    } else {
-      const hasImages = columns.some((c) => c.name === "images");
-      if (!hasImages) {
-        db.run(
-          "ALTER TABLE places ADD COLUMN images TEXT",
-          (alterErr) => {
-            if (alterErr) {
-              console.error(
-                "Ошибка добавления столбца images в places:",
-                alterErr
-              );
-            } else {
-              console.log("Столбец images добавлен в таблицу places");
-            }
-          }
-        );
-      }
-      const hasHours = columns.some((c) => c.name === "hours");
-      if (!hasHours) db.run("ALTER TABLE places ADD COLUMN hours TEXT");
+      return;
+    }
 
-      const hasPhone = columns.some((c) => c.name === "phone");
-      if (!hasPhone) db.run("ALTER TABLE places ADD COLUMN phone TEXT");
+    const colNames = new Set((columns || []).map((c) => c.name));
+
+    if (!colNames.has("images")) {
+      db.run("ALTER TABLE places ADD COLUMN images TEXT", (e) => {
+        if (e) console.error("Ошибка добавления images в places:", e);
+        else console.log("Столбец images добавлен в таблицу places");
+      });
+    }
+
+    if (!colNames.has("hours")) {
+      db.run("ALTER TABLE places ADD COLUMN hours TEXT", (e) => {
+        if (e) console.error("Ошибка добавления hours в places:", e);
+        else console.log("Столбец hours добавлен в таблицу places");
+      });
+    }
+
+    if (!colNames.has("phone")) {
+      db.run("ALTER TABLE places ADD COLUMN phone TEXT", (e) => {
+        if (e) console.error("Ошибка добавления phone в places:", e);
+        else console.log("Столбец phone добавлен в таблицу places");
+      });
     }
   });
 
-  // Путь к places.json (если структура проекта: /server/server.js и /src/places.json)
+  // --- 4) МИГРАЦИИ USERS: avatar ---
+  // ✅ исправлено: проверяем именно users, а не places
+  db.all("PRAGMA table_info(users)", (err, columns) => {
+    if (err) {
+      console.error("Ошибка PRAGMA table_info(users):", err);
+      return;
+    }
+
+    const colNames = new Set((columns || []).map((c) => c.name));
+
+    if (!colNames.has("avatar")) {
+      db.run("ALTER TABLE users ADD COLUMN avatar TEXT", (e) => {
+        if (e) console.error("Ошибка добавления avatar в users:", e);
+        else console.log("Столбец avatar добавлен в таблицу users");
+      });
+    }
+  });
+
+  // --- 5) МИГРАЦИИ PLACE_REVIEWS: user_id + backfill ---
+  // ✅ добавляем user_id, если таблица уже существовала без него
+  db.all("PRAGMA table_info(place_reviews)", (err, columns) => {
+    if (err) {
+      console.error("Ошибка PRAGMA table_info(place_reviews):", err);
+      return;
+    }
+
+    const colNames = new Set((columns || []).map((c) => c.name));
+
+    // 5.1) добавить колонку user_id
+    if (!colNames.has("user_id")) {
+      db.run("ALTER TABLE place_reviews ADD COLUMN user_id INTEGER", (e) => {
+        if (e) {
+          console.error("Ошибка добавления user_id в place_reviews:", e);
+          return;
+        }
+        console.log("Столбец user_id добавлен в таблицу place_reviews");
+
+        // 5.2) backfill: проставим user_id по user_login (если совпадает)
+        // Если у тебя логин в отзывах всегда совпадает с users.login — это заполнит корректно.
+        const backfillSql = `
+          UPDATE place_reviews
+          SET user_id = (
+            SELECT u.id FROM users u
+            WHERE u.login = place_reviews.user_login
+            LIMIT 1
+          )
+          WHERE user_id IS NULL AND user_login IS NOT NULL
+        `;
+        db.run(backfillSql, (e2) => {
+          if (e2) console.error("Ошибка backfill user_id:", e2);
+          else console.log("Backfill user_id в place_reviews выполнен");
+        });
+      });
+    } else {
+      // даже если колонка есть — можно один раз попытаться добить пропуски
+      const backfillSql = `
+        UPDATE place_reviews
+        SET user_id = (
+          SELECT u.id FROM users u
+          WHERE u.login = place_reviews.user_login
+          LIMIT 1
+        )
+        WHERE user_id IS NULL AND user_login IS NOT NULL
+      `;
+      db.run(backfillSql, (e2) => {
+        if (e2) console.error("Ошибка backfill user_id:", e2);
+        else console.log("Backfill user_id (повторный) выполнен");
+      });
+    }
+  });
+
+  // --- 6) Импорт places.json (один раз, если places пустая) ---
   const placesJsonPath = path.join(__dirname, "../src/places.json");
 
-  // Один раз перенесём данные из places.json в БД, если таблица пуста
   db.get("SELECT COUNT(*) AS cnt FROM places", (err, row) => {
     if (err) {
       console.error("Ошибка подсчёта places:", err);
@@ -279,8 +391,8 @@ db.serialize(() => {
         for (const p of placesFromJson) {
           const featuresJson = JSON.stringify(p.features || []);
           const imagesJson = JSON.stringify(p.images || []);
+
           stmt.run(
-            p.id || null,
             p.name || "",
             p.type || null,
             p.city || null,
@@ -291,7 +403,9 @@ db.serialize(() => {
             typeof p.rating === "number" ? p.rating : null,
             typeof p.reviews === "number" ? p.reviews : null,
             featuresJson,
-            p.link || null
+            p.link || null,
+            p.hours || null,
+            p.phone || null
           );
         }
 
@@ -409,12 +523,14 @@ app.post("/api/login", (req, res) => {
 
   const sql = `
     SELECT
+      id,
       login,
       first_name,
       last_name,
       city,
       email,
-      status
+      status,
+      avatar
     FROM users
     WHERE login = ? AND password = ?
   `;
@@ -435,13 +551,17 @@ app.post("/api/login", (req, res) => {
       });
     }
 
+    const host = `${req.protocol}://${req.get("host")}`;
+
     const user = {
+      id: row.id,
       login: row.login,
       first_name: row.first_name,
       last_name: row.last_name,
       city: row.city,
       email: row.email,
       status: row.status,
+      avatar: row.avatar ? (row.avatar.startsWith("http") ? row.avatar : `${host}${row.avatar}`) : null,
     };
 
     return res.json({
@@ -619,6 +739,131 @@ app.post("/api/register/verify", (req, res) => {
     );
   });
 });
+
+
+// ===================== USERS PROFILE =====================
+
+// Получить пользователя по логину (нужно, если в localStorage нет id)
+app.get("/api/users/by-login/:login", (req, res) => {
+  const login = req.params.login;
+  const sql = `
+    SELECT id, login, first_name, last_name, city, email, status, avatar
+    FROM users
+    WHERE login = ?
+  `;
+  db.get(sql, [login], (err, row) => {
+    if (err) {
+      console.error("DB error (get user by login):", err);
+      return res.status(500).json({ ok: false, message: "DB error" });
+    }
+    if (!row) return res.status(404).json({ ok: false, message: "User not found" });
+
+    const host = `${req.protocol}://${req.get("host")}`;
+    return res.json({
+      ok: true,
+      user: {
+        id: row.id,
+        login: row.login,
+        first_name: row.first_name,
+        last_name: row.last_name,
+        city: row.city,
+        email: row.email,
+        status: row.status,
+        avatar: row.avatar ? (row.avatar.startsWith("http") ? row.avatar : `${host}${row.avatar}`) : null,
+      },
+    });
+  });
+});
+
+// Обновить данные профиля
+app.put("/api/users/:id", (req, res) => {
+  const id = Number(req.params.id);
+  if (!Number.isInteger(id)) return res.status(400).json({ ok: false, message: "Invalid id" });
+
+  // принимаем и camelCase, и snake_case
+  const firstName = (req.body.firstName ?? req.body.first_name ?? "").trim();
+  const lastName = (req.body.lastName ?? req.body.last_name ?? "").trim();
+  const city = (req.body.city ?? "").trim();
+  const email = (req.body.email ?? "").trim();
+  const status = (req.body.status ?? "").trim();
+
+  const sql = `
+    UPDATE users
+    SET first_name = ?, last_name = ?, city = ?, email = ?, status = ?
+    WHERE id = ?
+  `;
+
+  db.run(sql, [firstName || null, lastName || null, city || null, email || null, status || null, id], function (err) {
+    if (err) {
+      console.error("DB error (update user):", err);
+      return res.status(500).json({ ok: false, message: "DB error" });
+    }
+    if (this.changes === 0) return res.status(404).json({ ok: false, message: "User not found" });
+
+    // ✅ Обновляем user_name во всех отзывах этого пользователя
+    db.get("SELECT id, login, first_name, last_name FROM users WHERE id = ?", [id], (uErr, uRow) => {
+      if (uErr || !uRow) {
+        // если что-то пошло не так — просто вернём обновлённого юзера ниже как раньше
+        console.error("DB error (fetch user after update):", uErr);
+        return continueReturnUser();
+      }
+
+      const displayName = [uRow.first_name, uRow.last_name].filter(Boolean).join(" ").trim();
+      const finalUserName = displayName || uRow.login || null;
+
+      db.run(
+        "UPDATE place_reviews SET user_name = ? WHERE user_id = ?",
+        [finalUserName, id],
+        (rErr) => {
+          if (rErr) console.error("DB error (update reviews user_name):", rErr);
+          return continueReturnUser();
+        }
+      );
+    });
+
+    function continueReturnUser() {
+      db.get("SELECT id, login, first_name, last_name, city, email, status, avatar FROM users WHERE id = ?", [id], (err2, row) => {
+        if (err2 || !row) return res.json({ ok: true });
+
+        const host = `${req.protocol}://${req.get("host")}`;
+        return res.json({
+          ok: true,
+          user: {
+            id: row.id,
+            login: row.login,
+            first_name: row.first_name,
+            last_name: row.last_name,
+            city: row.city,
+            email: row.email,
+            status: row.status,
+            avatar: row.avatar ? (row.avatar.startsWith("http") ? row.avatar : `${host}${row.avatar}`) : null,
+          },
+        });
+      });
+    }
+
+    return; // важно: чтобы ниже код не отработал второй раз
+  });
+});
+
+// Загрузка аватарки (файл будет называться по id: 12.png / 12.jpg и т.п.)
+app.post("/api/users/:id/avatar", avatarUpload.single("avatar"), (req, res) => {
+  const id = Number(req.params.id);
+  if (!Number.isInteger(id)) return res.status(400).json({ ok: false, message: "Invalid id" });
+
+  if (!req.file) return res.status(400).json({ ok: false, message: "No file" });
+
+  const relPath = `/avatars/${req.file.filename}`; // храним в БД относительный путь
+  db.run("UPDATE users SET avatar = ? WHERE id = ?", [relPath, id], function (err) {
+    if (err) {
+      console.error("DB error (update avatar):", err);
+      return res.status(500).json({ ok: false, message: "DB error" });
+    }
+    const host = `${req.protocol}://${req.get("host")}`;
+    return res.json({ ok: true, avatar: `${host}${relPath}` });
+  });
+});
+
 
 // ===================== ПОДСКАЗКИ ГОРОДОВ =====================
 
@@ -923,7 +1168,8 @@ app.post("/api/places/:id/reviews", (req, res) => {
     return res.status(400).json({ ok: false, message: "Invalid id" });
   }
 
-  const { userLogin, userName, text, rating } = req.body || {};
+  const { userLogin, userId, text, rating } = req.body || {};
+  const safeUserId = Number.isInteger(Number(userId)) ? Number(userId) : null;
   const normalizedText = (text || "").trim();
   const ratingNumber = Number(rating);
 
@@ -948,47 +1194,72 @@ app.post("/api/places/:id/reviews", (req, res) => {
     if (!placeRow) {
       return res.status(404).json({ ok: false, message: "Place not found" });
     }
+    
+    // ✅ Подтянем актуальное имя/фамилию пользователя из users
+    const resolveUserSql = safeUserId
+      ? "SELECT id, login, first_name, last_name FROM users WHERE id = ?"
+      : "SELECT id, login, first_name, last_name FROM users WHERE login = ?";
 
-    const createdAt = Math.floor(Date.now() / 1000);
-    const insertSql = `
-      INSERT INTO place_reviews (place_id, user_login, user_name, rating, text, created_at)
-      VALUES (?, ?, ?, ?, ?, ?)
-    `;
+    const resolveUserParam = safeUserId ? safeUserId : (userLogin || null);
 
-    db.run(
-      insertSql,
-      [placeId, userLogin || null, userName || null, ratingNumber, normalizedText, createdAt],
-      function (err) {
-        if (err) {
-          console.error("DB error (insert review):", err);
-          return res.status(500).json({ ok: false, message: "DB error" });
-        }
+    db.get(resolveUserSql, [resolveUserParam], (userErr, userRow) => {
+      if (userErr) {
+        console.error("DB error (resolve user for review):", userErr);
+        return res.status(500).json({ ok: false, message: "DB error" });
+      }
 
-        const newId = this.lastID;
-        db.get(
-          "SELECT id, place_id, user_login, user_name, rating, text, created_at FROM place_reviews WHERE id = ?",
-          [newId],
-          (getErr, row) => {
-            if (getErr) {
-              console.error("DB error (fetch new review):", getErr);
-              return res.status(500).json({ ok: false, message: "DB error" });
-            }
+      // если юзер не найден — оставим как аноним (или как пришёл login)
+      const finalUserId = userRow?.id ?? null;
+      const finalUserLogin = userRow?.login ?? (userLogin || null);
 
-            recalcPlaceRating(placeId, (recalcErr, stats) => {
-              if (recalcErr) {
-                console.error("DB error (recalc after review insert):", recalcErr);
+      const displayName = [userRow?.first_name, userRow?.last_name]
+        .filter(Boolean)
+        .join(" ")
+        .trim();
+
+      const finalUserName = displayName || finalUserLogin || "Аноним";
+
+      const createdAt = Math.floor(Date.now() / 1000);
+      const insertSql = `
+        INSERT INTO place_reviews (place_id, user_id, user_login, user_name, rating, text, created_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+      `;
+
+      db.run(
+        insertSql,
+        [placeId, finalUserId, finalUserLogin, finalUserName, ratingNumber, normalizedText, createdAt],
+        function (err) {
+          if (err) {
+            console.error("DB error (insert review):", err);
+            return res.status(500).json({ ok: false, message: "DB error" });
+          }
+
+          const newId = this.lastID;
+          db.get(
+            "SELECT id, place_id, user_id, user_login, user_name, rating, text, created_at FROM place_reviews WHERE id = ?",
+            [newId],
+            (getErr, row) => {
+              if (getErr) {
+                console.error("DB error (fetch new review):", getErr);
+                return res.status(500).json({ ok: false, message: "DB error" });
               }
 
-              res.json({
-                ok: true,
-                review: row ? mapReviewRow(row) : null,
-                stats: stats || null,
+              recalcPlaceRating(placeId, (recalcErr, stats) => {
+                if (recalcErr) console.error("DB error (recalc after review insert):", recalcErr);
+
+                res.json({
+                  ok: true,
+                  review: row ? mapReviewRow(row) : null,
+                  stats: stats || null,
+                });
               });
-            });
-          }
-        );
-      }
-    );
+            }
+          );
+        }
+      );
+    });
+
+    return; // важно: чтобы код ниже не продолжал выполняться
   });
 });
 

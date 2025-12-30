@@ -596,7 +596,7 @@
 .city-marker__label {
   margin-top: 4px;
   white-space: nowrap;
-  font-size: 12px;
+  font-size: 10px;
   font-weight: 500;
   color: #111827;
   text-shadow: 0 1px 2px rgba(255, 255, 255, 0.95);
@@ -1972,6 +1972,7 @@
 
   .place-sidecard {
     flex: 1 1 260px;
+    padding-bottom: 25px;
   }
 
   .place-page__gallery-main-img {
@@ -1995,6 +1996,7 @@
   .place-page__section-header {
     flex-direction: column;
     align-items: flex-start;
+    padding-bottom: 30px;
   }
 
   .place-page__gallery-main-img {
@@ -2403,7 +2405,7 @@
 .profile__card {
   background: #ffffff;
   border-radius: 24px;
-  padding: 24px 24px 20px;
+  padding: 60px 24px 20px;
   box-shadow: 0 10px 30px rgba(0, 0, 0, 0.06);
 }
 
@@ -2510,7 +2512,7 @@
   }
 
   .profile__card {
-    padding: 20px 16px 18px;
+    padding: 60px 16px 18px;
     border-radius: 20px;
   }
 
@@ -3207,4 +3209,309 @@
   height: 100% !important;     /* важно */
   display: block !important;
   object-fit: cover !important; /* увеличиваем и обрезаем */
+}
+
+/* ===== Profile header fixes (append at end) ===== */
+
+.profile__header-card {
+  position: relative;
+}
+
+.profile__header-row {
+  display: flex;
+  gap: 18px;
+  align-items: flex-start;
+}
+
+.profile__avatar-col {
+  flex: 0 0 auto;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 10px;
+}
+
+.profile__avatar {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 999px;
+  color: #fff;
+  font-weight: 800;
+  letter-spacing: 0.5px;
+  user-select: none;
+}
+
+.profile__avatar-img {
+  width: 72px;
+  height: 72px;
+  border-radius: 999px;
+  object-fit: cover;
+}
+
+.profile__info {
+  flex: 1 1 auto;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-width: 0;
+}
+
+/* топ-строка: имя/инпуты + кнопка "Изменить" на одном уровне */
+.profile__topline {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+
+  /* важно: имя визуально по центру высоты аватарки */
+  min-height: 72px;
+}
+
+.profile__name {
+  margin: 0;
+}
+
+.profile__name-fields {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+  width: 100%;
+  max-width: 520px;
+}
+
+.profile__edit-inline-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+  max-width: 520px;
+}
+
+/* кнопка "Изменить" — НЕ absolute, стоит рядом с именем */
+.profile__edit-btn {
+  flex: 0 0 auto;
+  border: 1px solid #e5e7eb;
+  background: #ffffff;
+  color: #111827;
+  padding: 10px 14px;
+  border-radius: 14px;
+  font-weight: 700;
+  cursor: pointer;
+  box-shadow: 0 8px 18px rgba(15, 23, 42, 0.08);
+  transition: transform 0.1s ease, box-shadow 0.15s ease, background-color 0.15s ease;
+}
+
+.profile__edit-btn:hover {
+  background-color: #f9fafb;
+  transform: translateY(-1px);
+  box-shadow: 0 12px 26px rgba(15, 23, 42, 0.12);
+}
+
+.profile__file-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 10px 12px;
+  border-radius: 14px;
+  border: 1px solid #e5e7eb;
+  background: #f3f4f6;
+  cursor: pointer;
+  font-weight: 600;
+  color: #111827;
+}
+
+.profile__edit-hint {
+  font-size: 12px;
+  color: #6b7280;
+  line-height: 1.4;
+}
+
+.profile__edit-input--white {
+  width: 100%;
+  padding: 12px 12px;
+  border-radius: 14px;
+  border: 1px solid #e5e7eb;
+  background: #f3f4f6;
+  color: #111827;
+  outline: none;
+}
+
+.profile__edit-input--white:focus {
+  background: #ffffff;
+  border-color: rgba(34, 197, 94, 0.65);
+  box-shadow: 0 0 0 3px rgba(34, 197, 94, 0.15);
+}
+
+.profile__email--locked {
+  opacity: 0.85;
+}
+
+.profile__lock {
+  font-size: 14px;
+  opacity: 0.8;
+}
+
+/* кнопки действий */
+.profile__edit-actions {
+  display: flex;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-top: 4px;
+}
+
+.profile__btn {
+  padding: 12px 16px;
+  border-radius: 14px;
+  border: 1px solid #e5e7eb;
+  background: #ffffff;
+  color: #111827;
+  cursor: pointer;
+  font-weight: 700;
+  transition: transform 0.1s ease, box-shadow 0.15s ease, background-color 0.15s ease;
+}
+
+.profile__btn:hover {
+  background-color: #f9fafb;
+  transform: translateY(-1px);
+  box-shadow: 0 10px 24px rgba(15, 23, 42, 0.10);
+}
+
+.profile__btn:active {
+  transform: translateY(0);
+  box-shadow: 0 6px 16px rgba(15, 23, 42, 0.10);
+}
+
+/* СДЕЛАТЬ "Сохранить" ЯВНОЙ */
+.profile__btn--primary {
+  border: none;
+  color: #ffffff;
+  background: linear-gradient(180deg, #22c55e 0%, #16a34a 100%);
+  box-shadow: 0 14px 34px rgba(34, 197, 94, 0.35);
+}
+
+.profile__btn--primary:hover:not(:disabled) {
+  box-shadow: 0 18px 44px rgba(34, 197, 94, 0.45);
+}
+
+.profile__btn--primary:disabled {
+  opacity: 0.6;
+  cursor: default;
+  box-shadow: none;
+  transform: none;
+}
+
+/* ===== Confirm modal ===== */
+.profile__confirm-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 80;
+  background: rgba(15, 23, 42, 0.45);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+}
+
+.profile__confirm-card {
+  width: min(420px, 100%);
+  background: #ffffff;
+  border-radius: 20px;
+  padding: 18px 18px 16px;
+  box-shadow: 0 18px 50px rgba(15, 23, 42, 0.25);
+}
+
+.profile__confirm-title {
+  font-size: 16px;
+  font-weight: 800;
+  color: #111827;
+  margin-bottom: 6px;
+}
+
+.profile__confirm-text {
+  font-size: 14px;
+  color: #4b5563;
+  margin-bottom: 14px;
+}
+
+.profile__confirm-actions {
+  display: flex;
+  gap: 10px;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+}
+
+/* ===== Responsive: edit button under info ===== */
+@media (max-width: 768px) {
+  .profile__header-row {
+    align-items: flex-start;
+  }
+
+  .profile__topline {
+    min-height: auto;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 10px;
+  }
+
+  .profile__edit-btn {
+    width: 100%;
+  }
+
+  .profile__name-fields,
+  .profile__edit-inline-grid {
+    grid-template-columns: 1fr;
+    max-width: 100%;
+  }
+}
+
+/* ===== PROFILE MOBILE HOTFIX (append at very end) ===== */
+
+/* 1) Email не должен ломаться по символам */
+.profile__email {
+  word-break: normal !important;
+  overflow-wrap: anywhere !important;
+}
+
+/* 2) Даем флексу переноситься, чтобы .profile__info не схлопывался */
+.profile__header-row {
+  flex-wrap: wrap !important;
+}
+
+/* 3) Запрещаем сжимать инфо в "полоску" */
+.profile__info {
+  flex: 1 1 260px !important;
+  min-width: 260px !important;
+}
+
+/* 4) На узких экранах делаем шапку профиля колонкой — стабильно */
+@media (max-width: 520px) {
+  .profile__header-row {
+    flex-direction: column !important;
+  }
+
+  .profile__avatar-col {
+    width: 100% !important;
+    align-items: flex-start !important;
+  }
+
+  .profile__info {
+    width: 100% !important;
+    min-width: 0 !important;
+  }
+
+  .profile__topline {
+    width: 100% !important;
+    flex-direction: column !important;
+    align-items: flex-start !important;
+  }
+
+  .profile__edit-btn {
+    width: 100% !important;
+  }
+
+  .profile__name-fields,
+  .profile__edit-inline-grid {
+    grid-template-columns: 1fr !important;
+    max-width: 100% !important;
+  }
 }

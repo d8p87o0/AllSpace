@@ -104,15 +104,6 @@ function LoginPage({ onLogin }) {
           <h1 className="login-section__title">
             Войдите на сайт, чтобы принять участие в обсуждении
           </h1>
-
-          <button
-            type="button"
-            className="login-close-btn"
-            onClick={() => navigate(-1)}
-            aria-label="Закрыть страницу входа"
-          >
-            ✕
-          </button>
         </div>
 
         <div className="login-card">
