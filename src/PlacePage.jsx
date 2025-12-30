@@ -525,10 +525,8 @@ export default function PlacePage() {
 
     try {
       const payload = {
-        userLogin: user.login,
-        userName:
-          `${user.firstName || ""} ${user.lastName || ""}`.trim() ||
-          user.login,
+        userId: user.id,           // ✅ важно
+        userLogin: user.login,     // можно оставить как fallback
         text,
         rating: ratingValue,
       };
@@ -834,7 +832,19 @@ export default function PlacePage() {
                           <div className="review-card__header">
                             <div className="review-card__user">
                               <div className="review-card__avatar">
-                                {initials}
+                                {review.userAvatar ? (
+                                  <img
+                                    src={review.userAvatar}
+                                    alt={displayName}
+                                    className="review-card__avatar-img"
+                                    onError={(e) => {
+                                      // если картинка не загрузилась — покажем инициалы
+                                      e.currentTarget.style.display = "none";
+                                    }}
+                                  />
+                                ) : (
+                                  initials
+                                )}
                               </div>
                               <div>
                                 <div className="review-card__name">

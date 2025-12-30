@@ -452,17 +452,26 @@ function mapPlaceRow(row) {
   };
 }
 
-function mapReviewRow(row) {
+function mapReviewRow(row, req) {
   const createdAtSec = Number(row.created_at || 0);
   const createdAt = createdAtSec
     ? new Date(createdAtSec * 1000).toISOString()
     : new Date().toISOString();
 
+  const host = req ? `${req.protocol}://${req.get("host")}` : "";
+  const avatarRaw = row.user_avatar || null;
+
+  const userAvatar = avatarRaw
+    ? (String(avatarRaw).startsWith("http") ? avatarRaw : `${host}${avatarRaw}`)
+    : null;
+
   return {
     id: row.id,
     placeId: row.place_id,
+    userId: row.user_id ?? null,
     userLogin: row.user_login || null,
     userName: row.user_name || null,
+    userAvatar, // ✅ добавили
     rating: row.rating,
     text: row.text,
     createdAt,
@@ -1123,10 +1132,21 @@ app.get("/api/places/:id/reviews", (req, res) => {
     }
 
     const sql = `
-      SELECT id, place_id, user_login, user_name, rating, text, created_at
-      FROM place_reviews
-      WHERE place_id = ?
-      ORDER BY created_at DESC, id DESC
+      SELECT
+        r.id,
+        r.place_id,
+        r.user_id,
+        r.user_login,
+        r.user_name,
+        r.rating,
+        r.text,
+        r.created_at,
+        COALESCE(u1.avatar, u2.avatar) AS user_avatar
+      FROM place_reviews r
+      LEFT JOIN users u1 ON u1.id = r.user_id
+      LEFT JOIN users u2 ON (r.user_id IS NULL AND u2.login = r.user_login)
+      WHERE r.place_id = ?
+      ORDER BY r.created_at DESC, r.id DESC
     `;
 
     db.all(sql, [placeId], (err, rows) => {
@@ -1140,7 +1160,7 @@ app.get("/api/places/:id/reviews", (req, res) => {
           console.error("DB error (recalc place rating):", recalcErr);
         }
 
-        const reviews = (rows || []).map(mapReviewRow);
+        const reviews = (rows || []).map((r) => mapReviewRow(r, req));
         const count = stats?.total ?? reviews.length ?? 0;
         const average =
           stats?.average ??
@@ -1197,8 +1217,8 @@ app.post("/api/places/:id/reviews", (req, res) => {
     
     // ✅ Подтянем актуальное имя/фамилию пользователя из users
     const resolveUserSql = safeUserId
-      ? "SELECT id, login, first_name, last_name FROM users WHERE id = ?"
-      : "SELECT id, login, first_name, last_name FROM users WHERE login = ?";
+      ? "SELECT id, login, first_name, last_name, avatar FROM users WHERE id = ?"
+      : "SELECT id, login, first_name, last_name, avatar FROM users WHERE login = ?";
 
     const resolveUserParam = safeUserId ? safeUserId : (userLogin || null);
 
@@ -1235,26 +1255,40 @@ app.post("/api/places/:id/reviews", (req, res) => {
           }
 
           const newId = this.lastID;
-          db.get(
-            "SELECT id, place_id, user_id, user_login, user_name, rating, text, created_at FROM place_reviews WHERE id = ?",
-            [newId],
-            (getErr, row) => {
-              if (getErr) {
-                console.error("DB error (fetch new review):", getErr);
-                return res.status(500).json({ ok: false, message: "DB error" });
-              }
-
-              recalcPlaceRating(placeId, (recalcErr, stats) => {
-                if (recalcErr) console.error("DB error (recalc after review insert):", recalcErr);
-
-                res.json({
-                  ok: true,
-                  review: row ? mapReviewRow(row) : null,
-                  stats: stats || null,
-                });
-              });
+          const fetchSql = `
+            SELECT
+              r.id,
+              r.place_id,
+              r.user_id,
+              r.user_login,
+              r.user_name,
+              r.rating,
+              r.text,
+              r.created_at,
+              COALESCE(u1.avatar, u2.avatar) AS user_avatar
+            FROM place_reviews r
+            LEFT JOIN users u1 ON u1.id = r.user_id
+            LEFT JOIN users u2 ON (r.user_id IS NULL AND u2.login = r.user_login)
+            WHERE r.id = ?
+            LIMIT 1
+          `;
+          
+          db.get(fetchSql, [newId], (getErr, row) => {
+            if (getErr) {
+              console.error("DB error (fetch new review):", getErr);
+              return res.status(500).json({ ok: false, message: "DB error" });
             }
-          );
+          
+            recalcPlaceRating(placeId, (recalcErr, stats) => {
+              if (recalcErr) console.error("DB error (recalc after review insert):", recalcErr);
+          
+              res.json({
+                ok: true,
+                review: row ? mapReviewRow(row, req) : null, // ✅ avatar вернётся сразу
+                stats: stats || null,
+              });
+            });
+          });
         }
       );
     });
