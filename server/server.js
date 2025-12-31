@@ -14,6 +14,7 @@ import dotenv from "dotenv";
 dotenv.config();
 
 const app = express();
+app.set("trust proxy", 1); // ✅ важно за nginx/https
 const PORT = 3001;
 
 const allowedOrigins = new Set([
@@ -108,65 +109,96 @@ function listPhotos(folder, req) {
   if (!folder) return [];
   const folderPath = path.join(photosRoot, folder);
   if (!fs.existsSync(folderPath)) return [];
-  const host = `${req.protocol}://${req.get("host")}`;
+
   return fs
     .readdirSync(folderPath, { withFileTypes: true })
     .filter((f) => f.isFile())
     .map((f) => f.name)
     .filter((f) => /\.(jpe?g|png|webp)$/i.test(f))
     .sort((a, b) => a.localeCompare(b, "ru"))
-    .map(
-      (f) =>
-        `${host}/photos/${encodeURIComponent(folder)}/${encodeURIComponent(f)}`
-    );
+    .map((f) => `/photos/${encodeURIComponent(folder)}/${encodeURIComponent(f)}`);
 }
 
 function collectPlacePhotos(place, req) {
-  const host = `${req.protocol}://${req.get("host")}`;
+  // Хелпер: нормализуем URL так, чтобы /photos всегда были относительными
+  const normalizeMedia = (url) => {
+    if (!url) return null;
 
-  // 1) Если у места явно задан список images в БД — доверяем ему и сохраняем порядок
+    const s = String(url).trim();
+
+    // data: оставляем как есть
+    if (/^data:/i.test(s)) return s;
+
+    // ✅ ВАЖНО: если это абсолютный URL и внутри есть /photos/..., режем домен -> оставляем /photos/...
+    // Пример: http://localhost:3001/photos/x/y.webp  -> /photos/x/y.webp
+    //         https://api.allspace.com.ru/photos/...  -> /photos/...
+    const photosMatch = s.match(/^https?:\/\/[^/]+(\/photos\/.*)$/i);
+    if (photosMatch) return photosMatch[1];
+
+    // Абсолютные (внешние) ссылки оставляем как есть
+    if (/^https?:\/\//i.test(s)) return s;
+
+    // Уже относительный путь от корня сайта
+    if (s.startsWith("/")) return s;
+
+    // "голое" имя -> считаем, что это фото в /photos/...
+    return `/photos/${s}`;
+  };
+
+  // 1) Если в БД задан images[] — нормализуем каждую ссылку
   if (Array.isArray(place?.images) && place.images.length) {
     const photos = place.images
-      .map((url) => {
-        if (!url) return null;
-
-        // уже абсолютный URL
-        if (/^https?:\/\//i.test(url)) return url;
-
-        // начинается с /photos/... — просто добавляем host
-        if (url.startsWith("/photos/")) return `${host}${url}`;
-
-        // начинается с /uploads или другой относительный путь
-        if (url.startsWith("/")) return `${host}${url}`;
-
-        // совсем голое имя файла / относительный путь — считаем от /photos
-        return `${host}/photos/${url}`;
-      })
+      .map(normalizeMedia)
       .filter(Boolean);
 
-    const cover = photos[0] || place.image || null;
+    const cover = normalizeMedia(photos[0] || place.image || null);
     return { photos, cover };
   }
 
-  // 2) Легаси-режим: ищем папку по URL/названию и сканируем все файлы
+  // 2) Легаси-режим: папка из image/url/имени -> listPhotos уже вернёт /photos/...
   const firstImage = Array.isArray(place?.images) ? place.images[0] : null;
   const folder =
     extractFolderFromImage(place?.image || "") ||
     extractFolderFromImage(firstImage || "") ||
     findFolderByName(place?.name || "");
+
   const photos = listPhotos(folder, req);
-  return { photos, cover: photos[0] || place?.image || null };
+
+  const cover = normalizeMedia(photos[0] || place?.image || null);
+  return { photos, cover };
 }
 
 function enrichPlaceForClient(place, req) {
   const { photos, cover } = collectPlacePhotos(place, req);
 
+  const normalizeMedia = (url) => {
+    if (!url) return null;
+
+    const s = String(url).trim();
+    if (/^data:/i.test(s)) return s;
+
+    // Режем любой абсолютный URL с /photos/... -> /photos/...
+    const photosMatch = s.match(/^https?:\/\/[^/]+(\/photos\/.*)$/i);
+    if (photosMatch) return photosMatch[1];
+
+    // Внешние абсолютные ссылки оставляем
+    if (/^https?:\/\//i.test(s)) return s;
+
+    if (s.startsWith("/")) return s;
+    return `/photos/${s}`;
+  };
+
+  const normalizedPhotos =
+    Array.isArray(photos) && photos.length
+      ? photos.map(normalizeMedia).filter(Boolean)
+      : [];
+
+  const normalizedImage = normalizeMedia(cover || place.image || null);
+
   return {
     ...place,
-    // cover = первая фотка (если нашлась), иначе то, что в БД
-    image: cover || place.image || null,
-    // если нашли фотки на диске — отдадим их как images
-    images: Array.isArray(photos) && photos.length ? photos : (place.images || []),
+    image: normalizedImage,
+    images: normalizedPhotos.length ? normalizedPhotos : (place.images || []),
   };
 }
 

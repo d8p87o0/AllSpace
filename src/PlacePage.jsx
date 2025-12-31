@@ -340,7 +340,7 @@ export default function PlacePage() {
 
     function resolveMediaUrl(url) {
       if (!url) return url;
-      // если URL начинается с /photos/... — это лежит на API (3001), а не на Vite (5173)
+      // если URL начинается с /photos/... — это лежит на API , а не на Vite (5173)
       if (url.startsWith("/photos/")) return `${API_BASE}${url}`;
       return url;
     }

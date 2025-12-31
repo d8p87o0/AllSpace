@@ -17,7 +17,7 @@ function resolveMediaUrl(url) {
   // абсолютные ссылки не трогаем
   if (/^https?:\/\//i.test(url)) return url;
 
-  // серверная статика лежит на 3001
+  // серверная статика лежит на 
   if (url.startsWith("/photos/")) return `${API_BASE}${url}`;
 
   // например /p1p1.png из public
