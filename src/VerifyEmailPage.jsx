@@ -37,7 +37,7 @@ function VerifyEmailPage() {
     setIsLoading(true);
 
     try {
-      const response = await fetch("http://localhost:3001/api/register/verify", {
+      const response = await fetch("/api/register/verify", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",

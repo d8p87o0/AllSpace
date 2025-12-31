@@ -9,7 +9,7 @@ import VerifyEmailPage from "./VerifyEmailPage.jsx";
 import { ProfilePage } from "./ProfilePage.jsx";
 import AdminPage from "./Admin.jsx";
 
-const API_BASE = "http://localhost:3001";
+const API_BASE = "";
 
 function resolveMediaUrl(url) {
   if (!url) return url;

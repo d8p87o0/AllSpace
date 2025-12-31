@@ -62,7 +62,7 @@ function RegisterPage() {
       }
 
       fetch(
-        `http://localhost:3001/api/cities?q=${encodeURIComponent(trimmed)}`
+        `/api/cities?q=${encodeURIComponent(trimmed)}`
       )
         .then((res) => res.json())
         .then((data) => {
@@ -163,7 +163,7 @@ function RegisterPage() {
 
     try {
       // 🔥 ШАГ 1: отправляем данные для генерации и отправки кода
-      const response = await fetch("http://localhost:3001/api/register/start", {
+      const response = await fetch("/api/register/start", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
