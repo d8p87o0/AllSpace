@@ -16,9 +16,20 @@ dotenv.config();
 const app = express();
 const PORT = 3001;
 
+const allowedOrigins = new Set([
+  "http://localhost:5173",
+  "https://allspace.com.ru",
+  "https://www.allspace.com.ru",
+]);
+
 app.use(
   cors({
-    origin: "http://localhost:5173",
+    origin(origin, cb) {
+      // запросы без Origin (например healthcheck/cron)
+      if (!origin) return cb(null, true);
+      return cb(null, allowedOrigins.has(origin));
+    },
+    credentials: true,
   })
 );
 app.use(express.json());
