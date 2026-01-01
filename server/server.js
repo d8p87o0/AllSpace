@@ -26,6 +26,47 @@ app.use(express.json());
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
+const MODERATION_STATUSES = new Set(["pending", "approved", "rejected"]);
+
+function normalizeModerationStatus(value, fallback = "pending") {
+  if (!value && fallback) return fallback;
+  const normalized = String(value || "").trim().toLowerCase();
+  return MODERATION_STATUSES.has(normalized) ? normalized : fallback;
+}
+
+async function notifyAboutPendingPlace(place) {
+  const token = process.env.TELEGRAM_BOT_TOKEN;
+  const chatId = process.env.TELEGRAM_ADMIN_CHAT_ID;
+  if (!token || !chatId) return;
+  if (typeof fetch !== "function") return;
+
+  const chunks = [
+    "Новое место на модерации",
+    place?.name ? `Название: ${place.name}` : null,
+    place?.city ? `Город: ${place.city}` : null,
+    place?.submittedBy ? `Добавил: ${place.submittedBy}` : null,
+    place?.address ? `Адрес: ${place.address}` : null,
+  ].filter(Boolean);
+
+  const text = chunks.join("\n");
+  const url = `https://api.telegram.org/bot${token}/sendMessage`;
+
+  try {
+    const res = await fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ chat_id: chatId, text }),
+    });
+    if (!res.ok) {
+      console.warn("Telegram notify failed:", res.status, await res.text());
+    } else {
+      console.log("Telegram notify sent for place:", place?.name || place?.id);
+    }
+  } catch (err) {
+    console.error("Telegram notify error:", err);
+  }
+}
+
 // Работа с фото
 const photosRoot = path.join(__dirname, "photos");
 if (!fs.existsSync(photosRoot)) {
@@ -235,7 +276,13 @@ db.serialize(() => {
       features TEXT, -- JSON-строка с массивом фич
       link TEXT,
       hours TEXT,
-      phone TEXT
+      phone TEXT,
+      moderation_status TEXT,
+      submitted_by TEXT,
+      moderated_by TEXT,
+      moderation_comment TEXT,
+      submitted_at INTEGER,
+      moderated_at INTEGER
     )
   `);
 
@@ -272,26 +319,74 @@ db.serialize(() => {
 
     const colNames = new Set((columns || []).map((c) => c.name));
 
+    const alterQueue = [];
+
     if (!colNames.has("images")) {
-      db.run("ALTER TABLE places ADD COLUMN images TEXT", (e) => {
-        if (e) console.error("Ошибка добавления images в places:", e);
-        else console.log("Столбец images добавлен в таблицу places");
-      });
+      alterQueue.push(["ALTER TABLE places ADD COLUMN images TEXT", "images"]);
     }
-
     if (!colNames.has("hours")) {
-      db.run("ALTER TABLE places ADD COLUMN hours TEXT", (e) => {
-        if (e) console.error("Ошибка добавления hours в places:", e);
-        else console.log("Столбец hours добавлен в таблицу places");
-      });
+      alterQueue.push(["ALTER TABLE places ADD COLUMN hours TEXT", "hours"]);
+    }
+    if (!colNames.has("phone")) {
+      alterQueue.push(["ALTER TABLE places ADD COLUMN phone TEXT", "phone"]);
+    }
+    if (!colNames.has("moderation_status")) {
+      alterQueue.push([
+        "ALTER TABLE places ADD COLUMN moderation_status TEXT",
+        "moderation_status",
+      ]);
+    }
+    if (!colNames.has("submitted_by")) {
+      alterQueue.push([
+        "ALTER TABLE places ADD COLUMN submitted_by TEXT",
+        "submitted_by",
+      ]);
+    }
+    if (!colNames.has("moderated_by")) {
+      alterQueue.push([
+        "ALTER TABLE places ADD COLUMN moderated_by TEXT",
+        "moderated_by",
+      ]);
+    }
+    if (!colNames.has("moderation_comment")) {
+      alterQueue.push([
+        "ALTER TABLE places ADD COLUMN moderation_comment TEXT",
+        "moderation_comment",
+      ]);
+    }
+    if (!colNames.has("submitted_at")) {
+      alterQueue.push([
+        "ALTER TABLE places ADD COLUMN submitted_at INTEGER",
+        "submitted_at",
+      ]);
+    }
+    if (!colNames.has("moderated_at")) {
+      alterQueue.push([
+        "ALTER TABLE places ADD COLUMN moderated_at INTEGER",
+        "moderated_at",
+      ]);
     }
 
-    if (!colNames.has("phone")) {
-      db.run("ALTER TABLE places ADD COLUMN phone TEXT", (e) => {
-        if (e) console.error("Ошибка добавления phone в places:", e);
-        else console.log("Столбец phone добавлен в таблицу places");
+    const runNextAlter = () => {
+      const item = alterQueue.shift();
+      if (!item) {
+        db.run(
+          "UPDATE places SET moderation_status = COALESCE(NULLIF(moderation_status, ''), 'approved') WHERE moderation_status IS NULL OR moderation_status = ''",
+          (e) => {
+            if (e) console.error("Ошибка бэкапа moderation_status:", e);
+          }
+        );
+        return;
+      }
+      const [sql, name] = item;
+      db.run(sql, (e) => {
+        if (e) console.error(`Ошибка добавления ${name} в places:`, e);
+        else console.log(`Столбец ${name} добавлен в таблицу places`);
+        runNextAlter();
       });
-    }
+    };
+
+    runNextAlter();
   });
 
   // --- 4) МИГРАЦИИ USERS: avatar ---
@@ -382,8 +477,8 @@ db.serialize(() => {
 
         const insertSql = `
           INSERT INTO places
-            (name, type, city, address, image, images, badge, rating, reviews, features, link, hours, phone)
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            (name, type, city, address, image, images, badge, rating, reviews, features, link, hours, phone, moderation_status, submitted_by, moderated_by, moderation_comment, submitted_at, moderated_at)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         `;
 
         const stmt = db.prepare(insertSql);
@@ -391,6 +486,7 @@ db.serialize(() => {
         for (const p of placesFromJson) {
           const featuresJson = JSON.stringify(p.features || []);
           const imagesJson = JSON.stringify(p.images || []);
+          const nowSec = Math.floor(Date.now() / 1000);
 
           stmt.run(
             p.name || "",
@@ -405,7 +501,13 @@ db.serialize(() => {
             featuresJson,
             p.link || null,
             p.hours || null,
-            p.phone || null
+            p.phone || null,
+            "approved",
+            "system",
+            "system",
+            null,
+            nowSec,
+            nowSec
           );
         }
 
@@ -449,6 +551,12 @@ function mapPlaceRow(row) {
     link: row.link,
     hours: row.hours || null,
     phone: row.phone || null,
+    moderationStatus: row.moderation_status || "approved",
+    submittedBy: row.submitted_by || null,
+    moderatedBy: row.moderated_by || null,
+    moderationComment: row.moderation_comment || null,
+    submittedAt: row.submitted_at ? Number(row.submitted_at) : null,
+    moderatedAt: row.moderated_at ? Number(row.moderated_at) : null,
   };
 }
 
@@ -889,7 +997,25 @@ app.get("/api/cities", (req, res) => {
 
 // Получить все места
 app.get("/api/places", (req, res) => {
-  db.all("SELECT * FROM places ORDER BY id ASC", (err, rows) => {
+  const includePending =
+    req.query.includePending === "1" ||
+    req.query.all === "1";
+
+  const sql = includePending
+    ? `
+      SELECT *
+      FROM places
+      ORDER BY
+        CASE
+          WHEN COALESCE(moderation_status, 'approved') = 'pending' THEN 0
+          WHEN COALESCE(moderation_status, 'approved') = 'rejected' THEN 1
+          ELSE 2
+        END,
+        id DESC
+    `
+    : "SELECT * FROM places WHERE COALESCE(moderation_status, 'approved') = 'approved' ORDER BY id ASC";
+
+  db.all(sql, (err, rows) => {
     if (err) {
       console.error("DB error (get places):", err);
       return res.status(500).json({
@@ -910,8 +1036,32 @@ app.get("/api/places", (req, res) => {
 app.post("/api/places", (req, res) => {
   const {
     name, type, city, address, image, images, badge, rating, reviews, features, link,
-    hours, phone, 
+    hours, phone,
   } = req.body;
+
+  const submittedBy =
+    (req.body.submittedBy ?? req.body.createdByLogin ?? req.body.userLogin ?? "").trim();
+  const moderatorFromBody = (req.body.moderatedBy ?? req.body.moderatedByLogin ?? "").trim();
+  const moderationComment = req.body.moderationComment || null;
+  const statusFromBody = (req.body.moderationStatus || "").trim().toLowerCase();
+  const skipModeration = req.body.skipModeration === true || req.body.skipModeration === "true";
+  const isAdminRequester = submittedBy.toLowerCase() === "admin";
+  const nowSec = Math.floor(Date.now() / 1000);
+
+  let moderationStatus = normalizeModerationStatus(statusFromBody, "pending");
+  if (isAdminRequester || skipModeration) {
+    moderationStatus = normalizeModerationStatus(statusFromBody || "approved", "approved");
+  }
+  if (!isAdminRequester && moderationStatus === "approved") {
+    moderationStatus = "pending";
+  }
+
+  const moderatedAt = moderationStatus === "approved" ? nowSec : null;
+  const moderatedBy =
+    moderationStatus === "approved"
+      ? moderatorFromBody || (isAdminRequester ? submittedBy || "admin" : null)
+      : null;
+  const submittedAt = nowSec;
 
   if (!name || !name.trim()) {
     return res.json({
@@ -925,8 +1075,8 @@ app.post("/api/places", (req, res) => {
 
   const sql = `
     INSERT INTO places
-      (name, type, city, address, image, images, badge, rating, reviews, features, link, hours, phone)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      (name, type, city, address, image, images, badge, rating, reviews, features, link, hours, phone, moderation_status, submitted_by, moderated_by, moderation_comment, submitted_at, moderated_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `;
 
   db.run(
@@ -945,6 +1095,12 @@ app.post("/api/places", (req, res) => {
       link || null,
       hours || null,
       phone || null,
+      moderationStatus,
+      submittedBy || null,
+      moderatedBy || null,
+      moderationComment || null,
+      submittedAt,
+      moderatedAt,
     ],
     function (err) {
       if (err) {
@@ -960,9 +1116,17 @@ app.post("/api/places", (req, res) => {
         if (err2 || !row) {
           return res.json({ ok: true }); // добавили, но не смогли вернуть
         }
+        const place = mapPlaceRow(row);
+
+        if (place.moderationStatus === "pending") {
+          notifyAboutPendingPlace(place).catch((e) =>
+            console.error("Notify pending place error:", e)
+          );
+        }
+
         res.json({
           ok: true,
-          place: mapPlaceRow(row),
+          place,
         });
       });
     }
@@ -981,8 +1145,15 @@ app.put("/api/places/:id", (req, res) => {
 
   const {
     name, type, city, address, image, images, badge, rating, reviews, features, link,
-    hours, phone, 
+    hours, phone,
   } = req.body;
+
+  const moderationStatusRaw = (req.body.moderationStatus || "").trim().toLowerCase();
+  const moderationCommentFromBody = req.body.moderationComment;
+  const moderatorFromBody = (req.body.moderatedBy ?? req.body.moderatedByLogin ?? "").trim();
+  const submittedByFromBody =
+    (req.body.submittedBy ?? req.body.createdByLogin ?? req.body.userLogin ?? "").trim();
+  const nowSec = Math.floor(Date.now() / 1000);
 
   if (!name || !name.trim()) {
     return res.json({
@@ -994,71 +1165,127 @@ app.put("/api/places/:id", (req, res) => {
   const featuresJson = JSON.stringify(Array.isArray(features) ? features : []);
   const imagesJson = JSON.stringify(Array.isArray(images) ? images : []);
 
-  const sql = `
-    UPDATE places
-    SET
-      name = ?,
-      type = ?,
-      city = ?,
-      address = ?,
-      image = ?,
-      images = ?,
-      badge = ?,
-      rating = ?,
-      reviews = ?,
-      features = ?,
-      link = ?,
-      hours = ?,
-      phone = ?
-    WHERE id = ?
-  `;
-
-  db.run(
-    sql,
-    [
-      name.trim(),
-      type || null,
-      city || null,
-      address || null,
-      image || null,
-      imagesJson,
-      badge || null,
-      rating ?? null,
-      reviews ?? null,
-      featuresJson,
-      link || null,
-      hours || null,
-      phone || null,
-      id,
-    ],
-    function (err) {
-      if (err) {
-        console.error("DB error (update place):", err);
-        return res.status(500).json({
-          ok: false,
-          message: "Ошибка сервера при обновлении места",
-        });
-      }
-
-      if (this.changes === 0) {
-        return res.json({
-          ok: false,
-          message: "Место не найдено",
-        });
-      }
-
-      db.get("SELECT * FROM places WHERE id = ?", [id], (err2, row) => {
-        if (err2 || !row) {
-          return res.json({ ok: true });
-        }
-        const place = mapPlaceRow(row);
-        res.json({
-          ok: true,
-          place: enrichPlaceForClient(place, req),
-        });
-      });
+  db.get("SELECT * FROM places WHERE id = ?", [id], (fetchErr, existingRow) => {
+    if (fetchErr) {
+      console.error("DB error (preload place for update):", fetchErr);
+      return res.status(500).json({ ok: false, message: "DB error" });
     }
-  );
+
+    if (!existingRow) {
+      return res.json({ ok: false, message: "Место не найдено" });
+    }
+
+    const existing = mapPlaceRow(existingRow);
+
+    const finalSubmittedBy = submittedByFromBody || existing.submittedBy || null;
+    let moderationStatus = normalizeModerationStatus(
+      moderationStatusRaw || existing.moderationStatus || "approved",
+      existing.moderationStatus || "approved"
+    );
+
+    const statusChanged = moderationStatus !== (existing.moderationStatus || "approved");
+
+    let moderatedBy = existing.moderatedBy || null;
+    let moderatedAt = existing.moderatedAt || null;
+
+    if (statusChanged) {
+      if (moderationStatus === "pending") {
+        moderatedBy = null;
+        moderatedAt = null;
+      } else {
+        moderatedBy =
+          moderatorFromBody ||
+          existing.moderatedBy ||
+          (finalSubmittedBy && finalSubmittedBy.toLowerCase() === "admin" ? finalSubmittedBy : null);
+        moderatedAt = nowSec;
+      }
+    }
+
+    const finalModerationComment =
+      moderationCommentFromBody !== undefined
+        ? moderationCommentFromBody
+        : existing.moderationComment || null;
+
+    const submittedAt = existing.submittedAt || nowSec;
+
+    const sql = `
+      UPDATE places
+      SET
+        name = ?,
+        type = ?,
+        city = ?,
+        address = ?,
+        image = ?,
+        images = ?,
+        badge = ?,
+        rating = ?,
+        reviews = ?,
+        features = ?,
+        link = ?,
+        hours = ?,
+        phone = ?,
+        moderation_status = ?,
+        submitted_by = ?,
+        moderated_by = ?,
+        moderation_comment = ?,
+        submitted_at = ?,
+        moderated_at = ?
+      WHERE id = ?
+    `;
+
+    db.run(
+      sql,
+      [
+        name.trim(),
+        type || null,
+        city || null,
+        address || null,
+        image || null,
+        imagesJson,
+        badge || null,
+        rating ?? null,
+        reviews ?? null,
+        featuresJson,
+        link || null,
+        hours || null,
+        phone || null,
+        moderationStatus,
+        finalSubmittedBy,
+        moderatedBy,
+        finalModerationComment,
+        submittedAt,
+        moderatedAt,
+        id,
+      ],
+      function (err) {
+        if (err) {
+          console.error("DB error (update place):", err);
+          return res.status(500).json({
+            ok: false,
+            message: "Ошибка сервера при обновлении места",
+          });
+        }
+
+        if (this.changes === 0) {
+          return res.json({
+            ok: false,
+            message: "Место не найдено",
+          });
+        }
+
+        db.get("SELECT * FROM places WHERE id = ?", [id], (err2, row) => {
+          if (err2 || !row) {
+            return res.json({ ok: true });
+          }
+          const place = mapPlaceRow(row);
+          res.json({
+            ok: true,
+            place: enrichPlaceForClient(place, req),
+          });
+        });
+      }
+    );
+  });
 });
 
 // Удалить место
@@ -1098,6 +1325,10 @@ app.get("/api/places/:id/photos", (req, res) => {
     return res.status(400).json({ ok: false, message: "Некорректный id" });
   }
 
+  const includePending =
+    req.query.includePending === "1" ||
+    req.query.all === "1";
+
   db.get("SELECT * FROM places WHERE id = ?", [id], (err, row) => {
     if (err) {
       console.error("DB error (place photos):", err);
@@ -1108,6 +1339,10 @@ app.get("/api/places/:id/photos", (req, res) => {
     }
 
     const place = mapPlaceRow(row);
+    if (!includePending && place.moderationStatus !== "approved") {
+      return res.status(404).json({ ok: false, message: "Место не найдено" });
+    }
+
     const { photos, cover } = collectPlacePhotos(place, req);
     return res.json({ ok: true, photos, cover });
   });
@@ -1121,13 +1356,22 @@ app.get("/api/places/:id/reviews", (req, res) => {
     return res.status(400).json({ ok: false, message: "Invalid id" });
   }
 
-  db.get("SELECT id FROM places WHERE id = ?", [placeId], (placeErr, placeRow) => {
+  const includePending =
+    req.query.includePending === "1" ||
+    req.query.all === "1";
+
+  db.get("SELECT id, moderation_status FROM places WHERE id = ?", [placeId], (placeErr, placeRow) => {
     if (placeErr) {
       console.error("DB error (check place for reviews):", placeErr);
       return res.status(500).json({ ok: false, message: "DB error" });
     }
 
     if (!placeRow) {
+      return res.status(404).json({ ok: false, message: "Place not found" });
+    }
+
+    const isApproved = (placeRow.moderation_status || "approved") === "approved";
+    if (!includePending && !isApproved) {
       return res.status(404).json({ ok: false, message: "Place not found" });
     }
 
@@ -1188,6 +1432,10 @@ app.post("/api/places/:id/reviews", (req, res) => {
     return res.status(400).json({ ok: false, message: "Invalid id" });
   }
 
+  const includePending =
+    req.query.includePending === "1" ||
+    req.query.all === "1";
+
   const { userLogin, userId, text, rating } = req.body || {};
   const safeUserId = Number.isInteger(Number(userId)) ? Number(userId) : null;
   const normalizedText = (text || "").trim();
@@ -1205,13 +1453,18 @@ app.post("/api/places/:id/reviews", (req, res) => {
       .json({ ok: false, message: "Rating must be from 1 to 5" });
   }
 
-  db.get("SELECT id, name FROM places WHERE id = ?", [placeId], (placeErr, placeRow) => {
+  db.get("SELECT id, name, moderation_status FROM places WHERE id = ?", [placeId], (placeErr, placeRow) => {
     if (placeErr) {
       console.error("DB error (check place before insert review):", placeErr);
       return res.status(500).json({ ok: false, message: "DB error" });
     }
 
     if (!placeRow) {
+      return res.status(404).json({ ok: false, message: "Place not found" });
+    }
+
+    const isApproved = (placeRow.moderation_status || "approved") === "approved";
+    if (!includePending && !isApproved) {
       return res.status(404).json({ ok: false, message: "Place not found" });
     }
     

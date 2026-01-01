@@ -77,6 +77,33 @@
   justify-content: space-between;
 }
 
+.header__actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.add-place-btn {
+  padding: 10px 16px;
+  border-radius: 12px;
+  border: none;
+  background: linear-gradient(135deg, #111827, #1f2937);
+  color: #fff;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: transform 0.1s ease, box-shadow 0.2s ease;
+}
+
+.add-place-btn:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 6px 16px rgba(17, 24, 39, 0.18);
+}
+
+.add-place-btn:active {
+  transform: translateY(0);
+}
+
 .logo {
   display: flex;
   align-items: center;
@@ -2860,6 +2887,15 @@
   color: #777;
 }
 
+.admin__place-status {
+  font-size: 11px;
+  color: #b26a00;
+}
+
+.admin__place-status--rejected {
+  color: #b00020;
+}
+
 .admin__delete-btn {
   margin-top: 8px;
   align-self: flex-start;
@@ -2870,6 +2906,27 @@
   color: #b00020;
   cursor: pointer;
   font-size: 13px;
+}
+
+.submit-section {
+  padding: 48px 0 60px;
+  background: #f8fafc;
+}
+
+.submit-header {
+  margin-bottom: 16px;
+}
+
+.submit-title {
+  font-size: 28px;
+  font-weight: 700;
+  margin: 0 0 8px;
+}
+
+.submit-subtitle {
+  margin: 0;
+  color: #4b5563;
+  font-size: 16px;
 }
 
 /* Content */

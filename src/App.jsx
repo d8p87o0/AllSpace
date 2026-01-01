@@ -8,6 +8,7 @@ import LoginPage from "./login.jsx";
 import VerifyEmailPage from "./VerifyEmailPage.jsx";
 import { ProfilePage } from "./ProfilePage.jsx";
 import AdminPage from "./Admin.jsx";
+import SubmitPlacePage from "./SubmitPlace.jsx";
 
 const API_BASE = "http://localhost:3001";
 
@@ -527,6 +528,25 @@ function App() {
     }
   };
 
+  const handleAddPlaceClick = () => {
+    try {
+      const raw = localStorage.getItem("user");
+      if (!raw) {
+        navigate("/login");
+        return;
+      }
+      const u = JSON.parse(raw);
+      if (u.login === "admin") {
+        navigate("/admin");
+      } else {
+        navigate("/submit");
+      }
+    } catch (e) {
+      console.error("Не удалось прочитать user из localStorage:", e);
+      navigate("/login");
+    }
+  };
+
   return (
     <div className="page">
       {/* Шапка */}
@@ -536,12 +556,18 @@ function App() {
           <img src="/logo1.svg" alt="SPACE logo" className="logo__image" />
         </div>
 
+          <div className="header__actions">
+            <button className="add-place-btn" onClick={handleAddPlaceClick}>
+              Добавить место
+            </button>
+
           <button className="profile-btn" onClick={handleProfileClick}>
             <span className="profile-btn__icon">
               <img src="/account.svg" alt="Профиль" className="logo__image" />
             </span>
             <span className="profile-btn__text">Профиль</span>
           </button>
+          </div>
         </div>
       </header>
 
@@ -958,6 +984,7 @@ function App() {
             path="/profile"
             element={<ProfilePage onLogout={() => setIsLoggedIn(false)} />}
           />
+          <Route path="/submit" element={<SubmitPlacePage />} />
           <Route path="/admin" element={<AdminPage />} />
         </Routes>
       </main>

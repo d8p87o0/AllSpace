@@ -18,6 +18,9 @@ const emptyForm = {
   link: "",
   hours: "", 
   phone: "", 
+  moderationStatus: "approved",
+  moderationComment: "",
+  submittedBy: "",
 };
 
 export default function AdminPage() {
@@ -109,13 +112,20 @@ export default function AdminPage() {
     setLoading(true);
     setError("");
     try {
-      const res = await fetch(`${API_BASE}/api/places`);
+      const res = await fetch(`${API_BASE}/api/places?includePending=1`);
       const data = await res.json();
       if (!data.ok) {
         setError(data.message || "Не удалось загрузить места");
         setPlaces([]);
       } else {
-        setPlaces(data.places || []);
+        const sorted = (data.places || []).slice().sort((a, b) => {
+          const order = { pending: 0, rejected: 1, approved: 2 };
+          const sa = order[a.moderationStatus || "approved"] ?? 3;
+          const sb = order[b.moderationStatus || "approved"] ?? 3;
+          if (sa !== sb) return sa - sb;
+          return (b.id || 0) - (a.id || 0);
+        });
+        setPlaces(sorted);
       }
     } catch (e) {
       console.error("Ошибка загрузки мест:", e);
@@ -261,6 +271,9 @@ export default function AdminPage() {
       link: place.link || "",
       hours: place.hours || "",
       phone: place.phone || "",
+      moderationStatus: place.moderationStatus || "approved",
+      moderationComment: place.moderationComment || "",
+      submittedBy: place.submittedBy || "",
     });
   
     // пока грузим — очистим, чтобы не мигало старое
@@ -269,7 +282,7 @@ export default function AdminPage() {
     setError("");
   
     try {
-      const res = await fetch(`${API_BASE}/api/places/${place.id}/photos`);
+      const res = await fetch(`${API_BASE}/api/places/${place.id}/photos?includePending=1`);
       const data = await res.json();
   
       if (data.ok && Array.isArray(data.photos) && data.photos.length) {
@@ -439,6 +452,10 @@ export default function AdminPage() {
         link: editForm.link.trim(),
         hours: editForm.hours.trim() || null,
         phone: editForm.phone.trim() || null,
+        moderationStatus: editForm.moderationStatus || "approved",
+        moderationComment: editForm.moderationComment || "",
+        moderatedByLogin: user?.login || "admin",
+        submittedBy: editForm.submittedBy || user?.login || "admin",
       };
 
       const res = await fetch(`${API_BASE}/api/places/${selectedPlaceId}`, {
@@ -511,6 +528,11 @@ export default function AdminPage() {
         link: createForm.link.trim(),
         hours: createForm.hours.trim() || null,
         phone: createForm.phone.trim() || null,
+        moderationStatus: createForm.moderationStatus || "approved",
+        moderationComment: createForm.moderationComment || "",
+        submittedBy: user?.login || "admin",
+        moderatedByLogin: user?.login || "admin",
+        skipModeration: true,
       };
   
       const res = await fetch(`${API_BASE}/api/places`, {
@@ -643,6 +665,18 @@ export default function AdminPage() {
                   >
                     <span className="admin__place-btn-name">{place.name}</span>
                     <span className="admin__place-btn-city">{place.city}</span>
+                    {place.moderationStatus !== "approved" && (
+                      <span
+                        className={
+                          "admin__place-status admin__place-status--" +
+                          (place.moderationStatus || "pending")
+                        }
+                      >
+                        {place.moderationStatus === "pending"
+                          ? "На модерации"
+                          : "Отклонено"}
+                      </span>
+                    )}
                   </button>
                 ))}
               </div>
@@ -766,6 +800,42 @@ export default function AdminPage() {
                       onChange={handleEditChange}
                     />
                   </div>
+
+                  <div className="admin-form__grid">
+                    <label className="admin-label">
+                      Статус модерации
+                      <select
+                        name="moderationStatus"
+                        className="admin-input"
+                        value={editForm.moderationStatus}
+                        onChange={handleEditChange}
+                      >
+                        <option value="approved">Опубликовано</option>
+                        <option value="pending">На модерации</option>
+                        <option value="rejected">Отклонено</option>
+                      </select>
+                    </label>
+
+                    <input
+                      type="text"
+                      name="submittedBy"
+                      className="admin-input"
+                      placeholder="Кто добавил (логин)"
+                      value={editForm.submittedBy}
+                      onChange={handleEditChange}
+                    />
+                  </div>
+
+                  <label className="admin-label">
+                    Комментарий модерации
+                    <textarea
+                      name="moderationComment"
+                      className="admin-textarea"
+                      placeholder="Комментарий или правки для автора"
+                      value={editForm.moderationComment}
+                      onChange={handleEditChange}
+                    />
+                  </label>
 
                   {/* === Блок картинок === */}
                   <div className="admin-images">
@@ -984,6 +1054,43 @@ export default function AdminPage() {
                     onChange={handleCreateChange}
                   />
                 </div>
+
+                <div className="admin-form__grid">
+                  <label className="admin-label">
+                    Статус модерации
+                    <select
+                      name="moderationStatus"
+                      className="admin-input"
+                      value={createForm.moderationStatus}
+                      onChange={handleCreateChange}
+                    >
+                      <option value="approved">Опубликовано</option>
+                      <option value="pending">На модерации</option>
+                      <option value="rejected">Отклонено</option>
+                    </select>
+                  </label>
+
+                  <input
+                    type="text"
+                    name="submittedBy"
+                    className="admin-input"
+                    placeholder="Кто добавил (логин)"
+                    value={createForm.submittedBy}
+                    onChange={handleCreateChange}
+                  />
+                </div>
+
+                <label className="admin-label">
+                  Комментарий модерации
+                  <textarea
+                    name="moderationComment"
+                    className="admin-textarea"
+                    placeholder="Комментарий или правки для автора"
+                    value={createForm.moderationComment}
+                    onChange={handleCreateChange}
+                  />
+                </label>
+
                 {/* === Блок картинок (CREATE) === */}
                 <div className="admin-images">
                   <div className="admin-images__header">
