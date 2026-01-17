@@ -11,11 +11,12 @@ import multer from "multer"; // 🔹 для загрузки файлов
 import nodemailer from "nodemailer";
 import dotenv from "dotenv";
 
-dotenv.config();
+dotenv.config({ override: true });
 
 const app = express();
 app.set("trust proxy", 1); // ✅ важно за nginx/https
-const PORT = 3001;
+const PORT = Number(process.env.PORT) || 3001;
+const HOST = "127.0.0.1";
 
 const allowedOrigins = new Set([
   "http://localhost:5173",
@@ -68,7 +69,13 @@ const storage = multer.diskStorage({
   },
 });
 
-const upload = multer({ storage });
+const upload = multer({
+  storage,
+  limits: {
+    fileSize: 10 * 1024 * 1024, // 10MB на файл (подбери под себя)
+    files: 20,
+  },
+});
 
 function normalizeKey(str = "") {
   return str
@@ -1342,6 +1349,6 @@ app.post("/api/places/:id/reviews", (req, res) => {
 
 // ===================== СТАРТ СЕРВЕРА =====================
 
-app.listen(PORT, () => {
-  console.log(`Server is running on http://localhost:${PORT}`);
+app.listen(PORT, HOST, () => {
+  console.log(`Server is running on http://${HOST}:${PORT}`);
 });

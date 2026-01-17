@@ -8,6 +8,8 @@ import LoginPage from "./login.jsx";
 import VerifyEmailPage from "./VerifyEmailPage.jsx";
 import { ProfilePage } from "./ProfilePage.jsx";
 import AdminPage from "./Admin.jsx";
+import SubmitPlacePage from "./SubmitPlace.jsx";
+
 
 const API_BASE = "";
 
@@ -527,6 +529,29 @@ function App() {
     }
   };
 
+  const handleSubmitPlaceClick = () => {
+    try {
+      const raw = localStorage.getItem("user");
+
+      if (!raw) {
+        navigate("/login");
+        return;
+      }
+
+      const u = JSON.parse(raw);
+
+      if (u.login === "admin") {
+        navigate("/admin");
+        return;
+      }
+
+      navigate("/submit-place");
+    } catch (e) {
+      console.error("Не удалось прочитать user из localStorage:", e);
+      navigate("/login");
+    }
+  };
+
   return (
     <div className="page">
       {/* Шапка */}
@@ -934,12 +959,9 @@ function App() {
                       Поделись с сообществом и помоги другим найти идеальное
                       пространство для работы
                     </p>
-                    <button
-                      className="footer-cta__btn"
-                      onClick={handleProfileClick}
-                    >
-                      Добавить
-                    </button>
+                    <button className="footer-cta__btn" onClick={handleSubmitPlaceClick}>
+			Добавить
+		    </button>
                   </div>
                 </section>
               </>
@@ -959,6 +981,7 @@ function App() {
             element={<ProfilePage onLogout={() => setIsLoggedIn(false)} />}
           />
           <Route path="/admin" element={<AdminPage />} />
+	  <Route path="/submit-place" element={<SubmitPlacePage />} />
         </Routes>
       </main>
 

@@ -3,7 +3,7 @@ import { useEffect, useState, useRef } from "react";
 import { useNavigate } from "react-router-dom";
 import "./App.css";
 
-const API_BASE = "http://localhost:3001";
+const API_BASE = "";
 
 const emptyForm = {
   name: "",
