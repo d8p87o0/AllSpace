@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import "./App.css";
 
-const API_BASE = "";
+const API_BASE = import.meta.env.VITE_API_BASE || "http://localhost:3001";
 
 const emptyForm = {
   name: "",
@@ -156,6 +156,22 @@ export default function SubmitPlacePage() {
     setLoading(true);
 
     try {
+      const nameValue = form.name.trim();
+      const cityValue = form.city.trim();
+      const addressValue = form.address.trim();
+      const imageValue = form.image.trim();
+      const hasImages = images.some((img) => !img.toDelete);
+
+      if (!nameValue || !cityValue || !addressValue) {
+        setError("Название, город и адрес обязательны.");
+        return;
+      }
+
+      if (!imageValue && !hasImages) {
+        setError("Нужно добавить хотя бы одно фото.");
+        return;
+      }
+
       const uploadedUrls = await uploadNewImages(images);
       let uploadIndex = 0;
 
@@ -174,11 +190,11 @@ export default function SubmitPlacePage() {
       const imagesForServer = finalImages.map((img) => img.url);
 
       const body = {
-        name: form.name.trim(),
+        name: nameValue,
         type: form.type.trim(),
-        city: form.city.trim(),
-        address: form.address.trim(),
-        image: imagesForServer[0] || form.image.trim(),
+        city: cityValue,
+        address: addressValue,
+        image: imagesForServer[0] || imageValue,
         images: imagesForServer,
         badge: form.badge.trim(),
         rating: form.rating ? Number(form.rating) : null,
@@ -253,6 +269,7 @@ export default function SubmitPlacePage() {
               placeholder="Город"
               value={form.city}
               onChange={handleChange}
+              required
             />
             <input
               type="text"
@@ -261,6 +278,7 @@ export default function SubmitPlacePage() {
               placeholder="Адрес"
               value={form.address}
               onChange={handleChange}
+              required
             />
             <input
               type="text"

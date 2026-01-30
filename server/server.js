@@ -18,8 +18,31 @@ app.set("trust proxy", 1); // ✅ важно за nginx/https
 const PORT = Number(process.env.PORT) || 3001;
 const HOST = "127.0.0.1";
 
+async function sendTelegramMessage(text) {
+  const token = process.env.TELEGRAM_BOT_TOKEN;
+  const chatId = process.env.TELEGRAM_ADMIN_CHAT_ID;
+  if (!token || !chatId) return;
+
+  try {
+    const url = `https://api.telegram.org/bot${token}/sendMessage`;
+    const res = await fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ chat_id: chatId, text }),
+    });
+
+    if (!res.ok) {
+      const body = await res.text();
+      console.error("Telegram notify failed:", res.status, body);
+    }
+  } catch (e) {
+    console.error("Telegram notify failed:", e);
+  }
+}
+
 const allowedOrigins = new Set([
   "http://localhost:5173",
+  "http://127.0.0.1:5173",
   "https://allspace.com.ru",
   "https://www.allspace.com.ru",
 ]);
@@ -285,7 +308,10 @@ db.serialize(() => {
       features TEXT, -- JSON-строка с массивом фич
       link TEXT,
       hours TEXT,
-      phone TEXT
+      phone TEXT,
+      moderation_status TEXT DEFAULT 'approved',
+      submitted_by TEXT,
+      submitted_at INTEGER
     )
   `);
 
@@ -340,6 +366,27 @@ db.serialize(() => {
       db.run("ALTER TABLE places ADD COLUMN phone TEXT", (e) => {
         if (e) console.error("Ошибка добавления phone в places:", e);
         else console.log("Столбец phone добавлен в таблицу places");
+      });
+    }
+
+    if (!colNames.has("moderation_status")) {
+      db.run("ALTER TABLE places ADD COLUMN moderation_status TEXT DEFAULT 'approved'", (e) => {
+        if (e) console.error("Ошибка добавления moderation_status в places:", e);
+        else console.log("Столбец moderation_status добавлен в таблицу places");
+      });
+    }
+
+    if (!colNames.has("submitted_by")) {
+      db.run("ALTER TABLE places ADD COLUMN submitted_by TEXT", (e) => {
+        if (e) console.error("Ошибка добавления submitted_by в places:", e);
+        else console.log("Столбец submitted_by добавлен в таблицу places");
+      });
+    }
+
+    if (!colNames.has("submitted_at")) {
+      db.run("ALTER TABLE places ADD COLUMN submitted_at INTEGER", (e) => {
+        if (e) console.error("Ошибка добавления submitted_at в places:", e);
+        else console.log("Столбец submitted_at добавлен в таблицу places");
       });
     }
   });
@@ -499,6 +546,9 @@ function mapPlaceRow(row) {
     link: row.link,
     hours: row.hours || null,
     phone: row.phone || null,
+    moderation_status: row.moderation_status || "approved",
+    submitted_by: row.submitted_by || null,
+    submitted_at: row.submitted_at || null,
   };
 }
 
@@ -939,7 +989,20 @@ app.get("/api/cities", (req, res) => {
 
 // Получить все места
 app.get("/api/places", (req, res) => {
-  db.all("SELECT * FROM places ORDER BY id ASC", (err, rows) => {
+  const status = String(req.query.status || "approved").toLowerCase();
+
+  let whereSql = "WHERE COALESCE(moderation_status, 'approved') = 'approved'";
+  if (status === "all") {
+    whereSql = "";
+  } else if (status === "pending") {
+    whereSql = "WHERE COALESCE(moderation_status, 'approved') = 'pending'";
+  } else if (status === "rejected") {
+    whereSql = "WHERE COALESCE(moderation_status, 'approved') = 'rejected'";
+  }
+
+  const sql = `SELECT * FROM places ${whereSql} ORDER BY id ASC`;
+
+  db.all(sql, (err, rows) => {
     if (err) {
       console.error("DB error (get places):", err);
       return res.status(500).json({
@@ -963,30 +1026,66 @@ app.post("/api/places", (req, res) => {
     hours, phone, 
   } = req.body;
 
-  if (!name || !name.trim()) {
+  const nameValue = (name || "").trim();
+  const cityValue = (city || "").trim();
+  const addressValue = (address || "").trim();
+  let imageValue = typeof image === "string" ? image.trim() : "";
+  const imagesArr = Array.isArray(images) ? images.filter(Boolean) : [];
+
+  if (!nameValue) {
     return res.json({
       ok: false,
       message: "Название обязательно",
     });
   }
 
+  if (!cityValue) {
+    return res.json({
+      ok: false,
+      message: "Город обязателен",
+    });
+  }
+
+  if (!addressValue) {
+    return res.json({
+      ok: false,
+      message: "Адрес обязателен",
+    });
+  }
+
+  if (!imageValue && imagesArr.length === 0) {
+    return res.json({
+      ok: false,
+      message: "Нужно добавить хотя бы одно фото",
+    });
+  }
+
+  if (!imageValue && imagesArr.length) {
+    imageValue = imagesArr[0];
+  }
+
+  const submittedByRaw = (req.body.submittedBy || "").trim();
+  const submittedBy = submittedByRaw || null;
+  const moderationStatus = submittedBy ? "pending" : "approved";
+  const submittedAt = submittedBy ? Math.floor(Date.now() / 1000) : null;
+
   const featuresJson = JSON.stringify(Array.isArray(features) ? features : []);
-  const imagesJson = JSON.stringify(Array.isArray(images) ? images : []);
+  const imagesJson = JSON.stringify(imagesArr);
 
   const sql = `
     INSERT INTO places
-      (name, type, city, address, image, images, badge, rating, reviews, features, link, hours, phone)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      (name, type, city, address, image, images, badge, rating, reviews, features, link, hours, phone, moderation_status, submitted_by, submitted_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `;
 
   db.run(
     sql,
     [
-      name.trim(),
+      nameValue,
       type || null,
-      city || null,
-      address || null,
-      image || null,
+      cityValue || null,
+      addressValue || null,
+      imageValue || null,
       imagesJson,
       badge || null,
       rating ?? null,
@@ -995,6 +1094,9 @@ app.post("/api/places", (req, res) => {
       link || null,
       hours || null,
       phone || null,
+      moderationStatus,
+      submittedBy,
+      submittedAt,
     ],
     function (err) {
       if (err) {
@@ -1009,6 +1111,17 @@ app.post("/api/places", (req, res) => {
       db.get("SELECT * FROM places WHERE id = ?", [newId], (err2, row) => {
         if (err2 || !row) {
           return res.json({ ok: true }); // добавили, но не смогли вернуть
+        }
+        if (moderationStatus === "pending") {
+          const lines = [
+            "Новое место на модерации",
+            `Название: ${row.name || ""}`,
+            `Город: ${row.city || ""}`,
+            `Адрес: ${row.address || ""}`,
+            submittedBy ? `Отправил: ${submittedBy}` : "",
+            `ID: ${row.id}`,
+          ].filter(Boolean);
+          void sendTelegramMessage(lines.join("\n"));
         }
         res.json({
           ok: true,
@@ -1107,6 +1220,52 @@ app.put("/api/places/:id", (req, res) => {
           place: enrichPlaceForClient(place, req),
         });
       });
+    }
+  );
+});
+
+// Одобрить место (модерация)
+app.post("/api/places/:id/approve", (req, res) => {
+  const id = Number(req.params.id);
+  if (!Number.isInteger(id)) {
+    return res.status(400).json({ ok: false, message: "Invalid id" });
+  }
+
+  db.run(
+    "UPDATE places SET moderation_status = 'approved' WHERE id = ?",
+    [id],
+    function (err) {
+      if (err) {
+        console.error("DB error (approve place):", err);
+        return res.status(500).json({ ok: false, message: "DB error" });
+      }
+      if (this.changes === 0) {
+        return res.status(404).json({ ok: false, message: "Place not found" });
+      }
+      return res.json({ ok: true });
+    }
+  );
+});
+
+// Отклонить место (модерация)
+app.post("/api/places/:id/reject", (req, res) => {
+  const id = Number(req.params.id);
+  if (!Number.isInteger(id)) {
+    return res.status(400).json({ ok: false, message: "Invalid id" });
+  }
+
+  db.run(
+    "UPDATE places SET moderation_status = 'rejected' WHERE id = ?",
+    [id],
+    function (err) {
+      if (err) {
+        console.error("DB error (reject place):", err);
+        return res.status(500).json({ ok: false, message: "DB error" });
+      }
+      if (this.changes === 0) {
+        return res.status(404).json({ ok: false, message: "Place not found" });
+      }
+      return res.json({ ok: true });
     }
   );
 });

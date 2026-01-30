@@ -11,7 +11,7 @@ import AdminPage from "./Admin.jsx";
 import SubmitPlacePage from "./SubmitPlace.jsx";
 
 
-const API_BASE = "";
+const API_BASE = import.meta.env.VITE_API_BASE || "http://localhost:3001";
 
 function resolveMediaUrl(url) {
   if (!url) return url;

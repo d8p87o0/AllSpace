@@ -3,6 +3,8 @@ import { useLocation, useNavigate } from "react-router-dom";
 import { useState } from "react";
 import "./App.css";
 
+const API_BASE = import.meta.env.VITE_API_BASE || "http://localhost:3001";
+
 function VerifyEmailPage() {
   const location = useLocation();
   const navigate = useNavigate();
@@ -37,7 +39,7 @@ function VerifyEmailPage() {
     setIsLoading(true);
 
     try {
-      const response = await fetch("/api/register/verify", {
+      const response = await fetch(`${API_BASE}/api/register/verify`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",

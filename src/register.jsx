@@ -3,6 +3,8 @@ import { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import "./App.css";
 
+const API_BASE = import.meta.env.VITE_API_BASE || "http://localhost:3001";
+
 function RegisterPage() {
   const navigate = useNavigate();
 
@@ -61,9 +63,7 @@ function RegisterPage() {
         return;
       }
 
-      fetch(
-        `/api/cities?q=${encodeURIComponent(trimmed)}`
-      )
+      fetch(`${API_BASE}/api/cities?q=${encodeURIComponent(trimmed)}`)
         .then((res) => res.json())
         .then((data) => {
           if (data.ok && Array.isArray(data.suggestions)) {
@@ -163,7 +163,7 @@ function RegisterPage() {
 
     try {
       // 🔥 ШАГ 1: отправляем данные для генерации и отправки кода
-      const response = await fetch("/api/register/start", {
+      const response = await fetch(`${API_BASE}/api/register/start`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",

@@ -2962,6 +2962,85 @@
   color: #1b5e20;
 }
 
+/* Модерация */
+.admin__moderation-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.admin__moderation-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 12px;
+  border-radius: 12px;
+  background: #f5f6fa;
+}
+
+.admin__moderation-info {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.admin__moderation-name {
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.admin__moderation-meta {
+  font-size: 12px;
+  color: #666;
+}
+
+.admin__moderation-actions {
+  display: flex;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+.admin__moderation-open {
+  border-radius: 999px;
+  padding: 6px 12px;
+  border: 1px solid #ccc;
+  background: #fff;
+  color: #333;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.admin__moderation-approve {
+  border-radius: 999px;
+  padding: 6px 12px;
+  border: none;
+  background: #3f51b5;
+  color: #fff;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.admin__moderation-reject {
+  border-radius: 999px;
+  padding: 6px 12px;
+  border: 1px solid #b00020;
+  background: #ffe2e2;
+  color: #b00020;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.admin__moderation-status {
+  font-size: 13px;
+  color: #7a5c00;
+  background: #fff6d8;
+  border-radius: 10px;
+  padding: 6px 10px;
+  margin-bottom: 10px;
+  display: inline-block;
+}
+
 /* Модалка удаления */
 
 .admin-modal {

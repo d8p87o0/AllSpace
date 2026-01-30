@@ -3,7 +3,7 @@ import { useNavigate } from "react-router-dom";
 import placesData from "./places.json";
 import "./App.css";
 
-const API_BASE = "";
+const API_BASE = import.meta.env.VITE_API_BASE || "http://localhost:3001";
 const FAVORITES_PREFIX = "favoritePlaces_";
 const getFavoritesKey = (login) => `${FAVORITES_PREFIX}${login}`;
 

@@ -3,7 +3,16 @@ import { useEffect, useState, useRef } from "react";
 import { useNavigate } from "react-router-dom";
 import "./App.css";
 
-const API_BASE = "";
+const API_BASE = import.meta.env.VITE_API_BASE || "http://localhost:3001";
+
+function resolveMediaUrl(url) {
+  if (!url) return url;
+  if (/^https?:\/\//i.test(url)) return url;
+  if (url.startsWith("/photos/") || url.startsWith("/avatars/")) {
+    return `${API_BASE}${url}`;
+  }
+  return url;
+}
 
 const emptyForm = {
   name: "",
@@ -40,6 +49,8 @@ export default function AdminPage() {
 
   const [user, setUser] = useState(null);
   const [places, setPlaces] = useState([]);
+  const [pendingPlaces, setPendingPlaces] = useState([]);
+  const [pendingLoading, setPendingLoading] = useState(false);
   const [loading, setLoading] = useState(true);
   const [selectedPlaceId, setSelectedPlaceId] = useState(null);
   const [editForm, setEditForm] = useState(emptyForm);
@@ -125,9 +136,79 @@ export default function AdminPage() {
     }
   };
 
+  const loadPendingPlaces = async () => {
+    setPendingLoading(true);
+    try {
+      const res = await fetch(`${API_BASE}/api/places?status=pending`);
+      const data = await res.json();
+      if (data.ok) {
+        setPendingPlaces(data.places || []);
+      } else {
+        setPendingPlaces([]);
+      }
+    } catch (e) {
+      console.error("Ошибка загрузки мест на модерации:", e);
+      setPendingPlaces([]);
+    } finally {
+      setPendingLoading(false);
+    }
+  };
+
   useEffect(() => {
     loadPlaces();
+    loadPendingPlaces();
   }, []);
+
+  const selectedPlace =
+    places.find((p) => p.id === selectedPlaceId) ||
+    pendingPlaces.find((p) => p.id === selectedPlaceId) ||
+    null;
+  const selectedPlaceStatus = selectedPlace?.moderation_status || "approved";
+
+  const approvePlace = async (placeId) => {
+    setError("");
+    setSuccess("");
+    try {
+      const res = await fetch(`${API_BASE}/api/places/${placeId}/approve`, {
+        method: "POST",
+      });
+      const data = await res.json();
+      if (!data.ok) {
+        setError(data.message || "Не удалось одобрить место");
+        return;
+      }
+      setSuccess("Место одобрено");
+      await loadPendingPlaces();
+      await loadPendingPlaces();
+      await loadPlaces();
+    } catch (e) {
+      console.error("Ошибка одобрения места:", e);
+      setError("Ошибка соединения с сервером");
+    }
+  };
+
+  const rejectPlace = async (placeId) => {
+    const ok = window.confirm("Отклонить это место?");
+    if (!ok) return;
+
+    setError("");
+    setSuccess("");
+    try {
+      const res = await fetch(`${API_BASE}/api/places/${placeId}/reject`, {
+        method: "POST",
+      });
+      const data = await res.json();
+      if (!data.ok) {
+        setError(data.message || "Не удалось отклонить место");
+        return;
+      }
+      setSuccess("Место отклонено");
+      await loadPendingPlaces();
+    } catch (e) {
+      console.error("Ошибка отклонения места:", e);
+      setError("Ошибка соединения с сервером");
+    }
+  };
 
 // после загрузки мест пробуем восстановить последнее выбранное место
   useEffect(() => {
@@ -474,6 +555,22 @@ export default function AdminPage() {
     setSuccess("");
   
     try {
+      const nameValue = createForm.name.trim();
+      const cityValue = createForm.city.trim();
+      const addressValue = createForm.address.trim();
+      const imageValue = createForm.image.trim();
+      const hasImages = createImages.some((img) => !img.toDelete);
+
+      if (!nameValue || !cityValue || !addressValue) {
+        setError("Название, город и адрес обязательны.");
+        return;
+      }
+
+      if (!imageValue && !hasImages) {
+        setError("Нужно добавить хотя бы одно фото.");
+        return;
+      }
+
       // 1) Загружаем выбранные фото (если есть)
       const uploadedUrls = await uploadNewImages(createImages);
       let uploadIndex = 0;
@@ -495,13 +592,13 @@ export default function AdminPage() {
   
       // 3) Формируем body
       const body = {
-        name: createForm.name.trim(),
+        name: nameValue,
         type: createForm.type.trim(),
-        city: createForm.city.trim(),
-        address: createForm.address.trim(),
+        city: cityValue,
+        address: addressValue,
   
         // главная картинка — первая загруженная, иначе то, что ввели вручную
-        image: imagesForServer[0] || createForm.image.trim(),
+        image: imagesForServer[0] || imageValue,
         images: imagesForServer, // галерея
   
         badge: createForm.badge.trim(),
@@ -648,13 +745,12 @@ export default function AdminPage() {
               </div>
             )}
 
-            {selectedPlaceId && (
+            {selectedPlace && (
               <button
                 type="button"
                 className="admin__delete-btn"
                 onClick={() => {
-                  const p = places.find((pl) => pl.id === selectedPlaceId);
-                  if (p) setDeleteTarget(p);
+                  setDeleteTarget(selectedPlace);
                 }}
               >
                 Удалить выбранное место
@@ -664,9 +760,63 @@ export default function AdminPage() {
 
           {/* ПРАВАЯ КОЛОНКА: формы */}
           <div className="admin__content">
+            {/* Модерация */}
+            <div className="admin__card">
+              <h2 className="admin__card-title">Модерация</h2>
+              {pendingLoading ? (
+                <p className="admin__hint">Загружаем заявки...</p>
+              ) : pendingPlaces.length === 0 ? (
+                <p className="admin__hint">Нет мест на модерации</p>
+              ) : (
+                <div className="admin__moderation-list">
+                  {pendingPlaces.map((place) => (
+                    <div key={place.id} className="admin__moderation-item">
+                      <div className="admin__moderation-info">
+                        <span className="admin__moderation-name">{place.name}</span>
+                        <span className="admin__moderation-meta">
+                          {[place.city, place.address].filter(Boolean).join(" • ")}
+                        </span>
+                        {place.submitted_by && (
+                          <span className="admin__moderation-meta">
+                            Отправил: {place.submitted_by}
+                          </span>
+                        )}
+                      </div>
+                      <div className="admin__moderation-actions">
+                        <button
+                          type="button"
+                          className="admin__moderation-open"
+                          onClick={() => handleSelectPlace(place)}
+                        >
+                          Открыть
+                        </button>
+                        <button
+                          type="button"
+                          className="admin__moderation-approve"
+                          onClick={() => approvePlace(place.id)}
+                        >
+                          Одобрить
+                        </button>
+                        <button
+                          type="button"
+                          className="admin__moderation-reject"
+                          onClick={() => rejectPlace(place.id)}
+                        >
+                          Отклонить
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+
             {/* Форма редактирования */}
             <div className="admin__card">
               <h2 className="admin__card-title">Редактирование места</h2>
+              {selectedPlaceId && selectedPlaceStatus === "pending" && (
+                <div className="admin__moderation-status">Статус: на модерации</div>
+              )}
               {!selectedPlaceId ? (
                 <p className="admin__hint">
                   Выберите место слева, чтобы отредактировать.
@@ -698,6 +848,7 @@ export default function AdminPage() {
                       placeholder="Город"
                       value={editForm.city}
                       onChange={handleEditChange}
+                      required
                     />
                     <input
                       type="text"
@@ -706,6 +857,7 @@ export default function AdminPage() {
                       placeholder="Адрес"
                       value={editForm.address}
                       onChange={handleEditChange}
+                      required
                     />
                     <input
                       type="text"
@@ -791,11 +943,11 @@ export default function AdminPage() {
                             }
                           >
                             <div className="admin-image-card__thumb-wrap">
-                              <img
-                                src={preview}
-                                alt=""
-                                className="admin-image-card__thumb"
-                              />
+                          <img
+                            src={resolveMediaUrl(preview)}
+                            alt=""
+                            className="admin-image-card__thumb"
+                          />
 
                               <div className="admin-image-card__index-badge">
                                 <input
@@ -916,6 +1068,7 @@ export default function AdminPage() {
                     placeholder="Город"
                     value={createForm.city}
                     onChange={handleCreateChange}
+                    required
                   />
                   <input
                     type="text"
@@ -924,6 +1077,7 @@ export default function AdminPage() {
                     placeholder="Адрес"
                     value={createForm.address}
                     onChange={handleCreateChange}
+                    required
                   />
                   <input
                     type="text"
@@ -1006,7 +1160,11 @@ export default function AdminPage() {
                           }
                         >
                           <div className="admin-image-card__thumb-wrap">
-                            <img src={preview} alt="" className="admin-image-card__thumb" />
+                            <img
+                              src={resolveMediaUrl(preview)}
+                              alt=""
+                              className="admin-image-card__thumb"
+                            />
 
                             <div className="admin-image-card__index-badge">
                               <input
