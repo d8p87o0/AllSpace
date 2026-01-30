@@ -1,9 +1,9 @@
-// VerifyEmailPage.jsx
+﻿// VerifyEmailPage.jsx
 import { useLocation, useNavigate } from "react-router-dom";
 import { useState } from "react";
 import "./App.css";
 
-const API_BASE = import.meta.env.VITE_API_BASE || "http://localhost:3001";
+const API_BASE = import.meta.env.VITE_API_BASE || (import.meta.env.PROD ? "/api" : "http://localhost:3001");
 
 function VerifyEmailPage() {
   const location = useLocation();
@@ -103,3 +103,4 @@ function VerifyEmailPage() {
 }
 
 export default VerifyEmailPage;
+

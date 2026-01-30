@@ -16,7 +16,7 @@ dotenv.config({ override: true });
 const app = express();
 app.set("trust proxy", 1); // ✅ важно за nginx/https
 const PORT = Number(process.env.PORT) || 3001;
-const HOST = "127.0.0.1";
+const HOST = process.env.HOST || "0.0.0.0";
 
 async function sendTelegramMessage(text) {
   const token = process.env.TELEGRAM_BOT_TOKEN;
@@ -40,18 +40,28 @@ async function sendTelegramMessage(text) {
   }
 }
 
+const envOrigins = [
+  process.env.CLIENT_ORIGIN,
+  ...(process.env.CLIENT_ORIGINS ? process.env.CLIENT_ORIGINS.split(",") : []),
+]
+  .map((origin) => (origin || "").trim())
+  .filter(Boolean);
+
 const allowedOrigins = new Set([
+  ...envOrigins,
   "http://localhost:5173",
   "http://127.0.0.1:5173",
   "https://allspace.com.ru",
   "https://www.allspace.com.ru",
 ]);
+const allowAllOrigins = process.env.CORS_ALLOW_ALL === "true";
 
 app.use(
   cors({
     origin(origin, cb) {
       // запросы без Origin (например healthcheck/cron)
       if (!origin) return cb(null, true);
+      if (allowAllOrigins) return cb(null, true);
       return cb(null, allowedOrigins.has(origin));
     },
     credentials: true,

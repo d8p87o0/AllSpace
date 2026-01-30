@@ -1,9 +1,9 @@
-// RegisterPage.jsx
+﻿// RegisterPage.jsx
 import { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import "./App.css";
 
-const API_BASE = import.meta.env.VITE_API_BASE || "http://localhost:3001";
+const API_BASE = import.meta.env.VITE_API_BASE || (import.meta.env.PROD ? "/api" : "http://localhost:3001");
 
 function RegisterPage() {
   const navigate = useNavigate();
@@ -375,3 +375,4 @@ function RegisterPage() {
 }
 
 export default RegisterPage;
+

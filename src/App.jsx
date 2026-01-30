@@ -1,4 +1,4 @@
-import { useEffect, useState, useRef } from "react";
+﻿import { useEffect, useState, useRef } from "react";
 import { Routes, Route, useNavigate } from "react-router-dom";
 // import placesData from "./places.json"; // больше не нужно
 import PlacePage from "./PlacePage.jsx";
@@ -11,7 +11,7 @@ import AdminPage from "./Admin.jsx";
 import SubmitPlacePage from "./SubmitPlace.jsx";
 
 
-const API_BASE = import.meta.env.VITE_API_BASE || "http://localhost:3001";
+const API_BASE = import.meta.env.VITE_API_BASE || (import.meta.env.PROD ? "/api" : "http://localhost:3001");
 
 function resolveMediaUrl(url) {
   if (!url) return url;
@@ -1005,3 +1005,4 @@ function App() {
 }
 
 export default App;
+

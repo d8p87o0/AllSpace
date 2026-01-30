@@ -1,9 +1,9 @@
-// src/Admin.jsx
+﻿// src/Admin.jsx
 import { useEffect, useState, useRef } from "react";
 import { useNavigate } from "react-router-dom";
 import "./App.css";
 
-const API_BASE = import.meta.env.VITE_API_BASE || "http://localhost:3001";
+const API_BASE = import.meta.env.VITE_API_BASE || (import.meta.env.PROD ? "/api" : "http://localhost:3001");
 
 function resolveMediaUrl(url) {
   if (!url) return url;
@@ -1278,3 +1278,4 @@ export default function AdminPage() {
     </section>
   );
 }
+

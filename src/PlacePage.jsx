@@ -1,8 +1,8 @@
-// src/PlacePage.jsx
+﻿// src/PlacePage.jsx
 import { useEffect, useState } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 
-const API_BASE = import.meta.env.VITE_API_BASE || "http://localhost:3001";
+const API_BASE = import.meta.env.VITE_API_BASE || (import.meta.env.PROD ? "/api" : "http://localhost:3001");
 const FAVORITES_PREFIX = "favoritePlaces_";
 // Доп. описание и особенности для мест
 
@@ -1055,3 +1055,4 @@ export default function PlacePage() {
     </>
   );
 }
+
