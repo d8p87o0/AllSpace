@@ -336,6 +336,7 @@ db.serialize(() => {
       user_name TEXT,
       rating INTEGER NOT NULL CHECK (rating >= 1 AND rating <= 5),
       text TEXT NOT NULL,
+      images TEXT,                 -- JSON array of review photo URLs
       created_at INTEGER NOT NULL DEFAULT (strftime('%s','now')),
       FOREIGN KEY (place_id) REFERENCES places(id) ON DELETE CASCADE
     )
@@ -428,6 +429,13 @@ db.serialize(() => {
     }
 
     const colNames = new Set((columns || []).map((c) => c.name));
+
+    if (!colNames.has("images")) {
+      db.run("ALTER TABLE place_reviews ADD COLUMN images TEXT", (e) => {
+        if (e) console.error("DB error (add images to place_reviews):", e);
+        else console.log("Column images added to place_reviews");
+      });
+    }
 
     // 5.1) добавить колонку user_id
     if (!colNames.has("user_id")) {
@@ -575,6 +583,28 @@ function mapReviewRow(row, req) {
     ? (String(avatarRaw).startsWith("http") ? avatarRaw : `${host}${avatarRaw}`)
     : null;
 
+  const normalizeReviewMedia = (url) => {
+    if (!url) return null;
+    const s = String(url).trim();
+    if (/^data:/i.test(s)) return s;
+    const photosMatch = s.match(/^https?:\/\/[^/]+(\/photos\/.*)$/i);
+    if (photosMatch) return photosMatch[1];
+    if (/^https?:\/\//i.test(s)) return s;
+    if (s.startsWith("/")) return s;
+    return `/photos/${s}`;
+  };
+
+  let images = [];
+  try {
+    images = row.images ? JSON.parse(row.images) : [];
+  } catch (e) {
+    images = [];
+  }
+
+  const normalizedImages = Array.isArray(images)
+    ? images.map(normalizeReviewMedia).filter(Boolean)
+    : [];
+
   return {
     id: row.id,
     placeId: row.place_id,
@@ -584,6 +614,7 @@ function mapReviewRow(row, req) {
     userAvatar, // ✅ добавили
     rating: row.rating,
     text: row.text,
+    images: normalizedImages,
     createdAt,
   };
 }
@@ -610,6 +641,30 @@ function recalcPlaceRating(placeId, cb = () => {}) {
       [total > 0 ? avg : null, total, placeId],
       (updateErr) => cb(updateErr, { total, average: total > 0 ? avg : null })
     );
+  });
+}
+
+function resolveRequestUser(req, cb) {
+  const { userId, userLogin } = req.body || {};
+  const safeUserId = Number.isInteger(Number(userId)) ? Number(userId) : null;
+  const loginFromBody = typeof userLogin === "string" ? userLogin.trim() : "";
+
+  if (!safeUserId) {
+    return cb(null, {
+      id: null,
+      login: loginFromBody || null,
+      isAdmin: loginFromBody === "admin",
+    });
+  }
+
+  db.get("SELECT id, login FROM users WHERE id = ?", [safeUserId], (err, row) => {
+    if (err) return cb(err);
+    const login = row?.login || loginFromBody || null;
+    return cb(null, {
+      id: row?.id ?? safeUserId,
+      login,
+      isAdmin: login === "admin",
+    });
   });
 }
 
@@ -1359,6 +1414,7 @@ app.get("/api/places/:id/reviews", (req, res) => {
         r.user_name,
         r.rating,
         r.text,
+        r.images,
         r.created_at,
         COALESCE(u1.avatar, u2.avatar) AS user_avatar
       FROM place_reviews r
@@ -1407,10 +1463,15 @@ app.post("/api/places/:id/reviews", (req, res) => {
     return res.status(400).json({ ok: false, message: "Invalid id" });
   }
 
-  const { userLogin, userId, text, rating } = req.body || {};
-  const safeUserId = Number.isInteger(Number(userId)) ? Number(userId) : null;
+  const { userLogin, text, rating, images } = req.body || {};
   const normalizedText = (text || "").trim();
   const ratingNumber = Number(rating);
+  const imagesArray = Array.isArray(images)
+    ? images
+        .filter((item) => typeof item === "string" && item.trim())
+        .slice(0, 10)
+    : [];
+  const imagesJson = JSON.stringify(imagesArray);
 
   if (!normalizedText) {
     return res
@@ -1433,90 +1494,348 @@ app.post("/api/places/:id/reviews", (req, res) => {
     if (!placeRow) {
       return res.status(404).json({ ok: false, message: "Place not found" });
     }
-    
-    // ✅ Подтянем актуальное имя/фамилию пользователя из users
-    const resolveUserSql = safeUserId
-      ? "SELECT id, login, first_name, last_name, avatar FROM users WHERE id = ?"
-      : "SELECT id, login, first_name, last_name, avatar FROM users WHERE login = ?";
 
-    const resolveUserParam = safeUserId ? safeUserId : (userLogin || null);
-
-    db.get(resolveUserSql, [resolveUserParam], (userErr, userRow) => {
-      if (userErr) {
-        console.error("DB error (resolve user for review):", userErr);
+    resolveRequestUser(req, (requestErr, requester) => {
+      if (requestErr) {
+        console.error("DB error (resolve requester for review):", requestErr);
         return res.status(500).json({ ok: false, message: "DB error" });
       }
 
-      // если юзер не найден — оставим как аноним (или как пришёл login)
-      const finalUserId = userRow?.id ?? null;
-      const finalUserLogin = userRow?.login ?? (userLogin || null);
+      const duplicateConditions = [];
+      const duplicateParams = [placeId];
 
-      const displayName = [userRow?.first_name, userRow?.last_name]
-        .filter(Boolean)
-        .join(" ")
-        .trim();
+      if (requester.id) {
+        duplicateConditions.push("user_id = ?");
+        duplicateParams.push(requester.id);
+      }
 
-      const finalUserName = displayName || finalUserLogin || "Аноним";
+      if (requester.login) {
+        duplicateConditions.push("user_login = ?");
+        duplicateParams.push(requester.login);
+      }
 
-      const createdAt = Math.floor(Date.now() / 1000);
-      const insertSql = `
-        INSERT INTO place_reviews (place_id, user_id, user_login, user_name, rating, text, created_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?)
-      `;
+      const checkDuplicateAndContinue = (next) => {
+        if (requester.isAdmin || !duplicateConditions.length) {
+          return next(null, false);
+        }
 
-      db.run(
-        insertSql,
-        [placeId, finalUserId, finalUserLogin, finalUserName, ratingNumber, normalizedText, createdAt],
-        function (err) {
-          if (err) {
-            console.error("DB error (insert review):", err);
+        const checkSql = `
+          SELECT id
+          FROM place_reviews
+          WHERE place_id = ? AND (${duplicateConditions.join(" OR ")})
+          LIMIT 1
+        `;
+
+        db.get(checkSql, duplicateParams, (dupErr, dupRow) => {
+          if (dupErr) {
+            console.error("DB error (check duplicate review):", dupErr);
+            return next(dupErr);
+          }
+
+          return next(null, Boolean(dupRow));
+        });
+      };
+
+      checkDuplicateAndContinue((dupErr, hasDuplicate) => {
+        if (dupErr) {
+          return res.status(500).json({ ok: false, message: "DB error" });
+        }
+
+        if (hasDuplicate) {
+          return res.status(409).json({
+            ok: false,
+            message: "You already left a review for this place. Edit the existing one.",
+          });
+        }
+
+        const resolveUserSql = requester.id
+          ? "SELECT id, login, first_name, last_name, avatar FROM users WHERE id = ?"
+          : "SELECT id, login, first_name, last_name, avatar FROM users WHERE login = ?";
+        const resolveUserParam = requester.id || requester.login || null;
+
+        if (!resolveUserParam) {
+          return res.status(400).json({ ok: false, message: "User is required" });
+        }
+
+        db.get(resolveUserSql, [resolveUserParam], (userErr, userRow) => {
+          if (userErr) {
+            console.error("DB error (resolve user for review):", userErr);
             return res.status(500).json({ ok: false, message: "DB error" });
           }
 
-          const newId = this.lastID;
-          const fetchSql = `
-            SELECT
-              r.id,
-              r.place_id,
-              r.user_id,
-              r.user_login,
-              r.user_name,
-              r.rating,
-              r.text,
-              r.created_at,
-              COALESCE(u1.avatar, u2.avatar) AS user_avatar
-            FROM place_reviews r
-            LEFT JOIN users u1 ON u1.id = r.user_id
-            LEFT JOIN users u2 ON (r.user_id IS NULL AND u2.login = r.user_login)
-            WHERE r.id = ?
-            LIMIT 1
+          const finalUserId = userRow?.id ?? null;
+          const finalUserLogin = userRow?.login ?? requester.login ?? (userLogin || null);
+
+          const displayName = [userRow?.first_name, userRow?.last_name]
+            .filter(Boolean)
+            .join(" ")
+            .trim();
+
+          const finalUserName = displayName || finalUserLogin || "Anonymous";
+
+          const createdAt = Math.floor(Date.now() / 1000);
+          const insertSql = `
+            INSERT INTO place_reviews (place_id, user_id, user_login, user_name, rating, text, images, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
           `;
-          
-          db.get(fetchSql, [newId], (getErr, row) => {
-            if (getErr) {
-              console.error("DB error (fetch new review):", getErr);
-              return res.status(500).json({ ok: false, message: "DB error" });
-            }
-          
-            recalcPlaceRating(placeId, (recalcErr, stats) => {
-              if (recalcErr) console.error("DB error (recalc after review insert):", recalcErr);
-          
-              res.json({
-                ok: true,
-                review: row ? mapReviewRow(row, req) : null, // ✅ avatar вернётся сразу
-                stats: stats || null,
+
+          db.run(
+            insertSql,
+            [placeId, finalUserId, finalUserLogin, finalUserName, ratingNumber, normalizedText, imagesJson, createdAt],
+            function (err) {
+              if (err) {
+                if (err.code === "SQLITE_CONSTRAINT") {
+                  return res.status(409).json({
+                    ok: false,
+                    message: "You already left a review for this place. Edit the existing one.",
+                  });
+                }
+
+                console.error("DB error (insert review):", err);
+                return res.status(500).json({ ok: false, message: "DB error" });
+              }
+
+              const newId = this.lastID;
+              const fetchSql = `
+                SELECT
+                  r.id,
+                  r.place_id,
+                  r.user_id,
+                  r.user_login,
+                  r.user_name,
+                  r.rating,
+                  r.text,
+                  r.images,
+                  r.created_at,
+                  COALESCE(u1.avatar, u2.avatar) AS user_avatar
+                FROM place_reviews r
+                LEFT JOIN users u1 ON u1.id = r.user_id
+                LEFT JOIN users u2 ON (r.user_id IS NULL AND u2.login = r.user_login)
+                WHERE r.id = ?
+                LIMIT 1
+              `;
+
+              db.get(fetchSql, [newId], (getErr, row) => {
+                if (getErr) {
+                  console.error("DB error (fetch new review):", getErr);
+                  return res.status(500).json({ ok: false, message: "DB error" });
+                }
+
+                recalcPlaceRating(placeId, (recalcErr, stats) => {
+                  if (recalcErr) console.error("DB error (recalc after review insert):", recalcErr);
+
+                  res.json({
+                    ok: true,
+                    review: row ? mapReviewRow(row, req) : null,
+                    stats: stats || null,
+                  });
+                });
               });
+            }
+          );
+        });
+      });
+    });
+
+    return;
+  });
+});
+
+app.put("/api/places/:placeId/reviews/:reviewId", (req, res) => {
+  const placeId = Number(req.params.placeId);
+  const reviewId = Number(req.params.reviewId);
+  if (!Number.isInteger(placeId) || !Number.isInteger(reviewId)) {
+    return res.status(400).json({ ok: false, message: "Invalid id" });
+  }
+
+  const { text, rating, images } = req.body || {};
+  const updates = [];
+  const params = [];
+
+  if (typeof text === "string") {
+    const normalizedText = text.trim();
+    if (!normalizedText) {
+      return res.status(400).json({ ok: false, message: "Review text is required" });
+    }
+    updates.push("text = ?");
+    params.push(normalizedText);
+  }
+
+  if (rating !== undefined) {
+    const ratingNumber = Number(rating);
+    if (!Number.isInteger(ratingNumber) || ratingNumber < 1 || ratingNumber > 5) {
+      return res.status(400).json({ ok: false, message: "Rating must be from 1 to 5" });
+    }
+    updates.push("rating = ?");
+    params.push(ratingNumber);
+  }
+
+  if (images !== undefined) {
+    const imagesArray = Array.isArray(images)
+      ? images
+          .filter((item) => typeof item === "string" && item.trim())
+          .slice(0, 10)
+      : [];
+    updates.push("images = ?");
+    params.push(JSON.stringify(imagesArray));
+  }
+
+  if (!updates.length) {
+    return res.status(400).json({ ok: false, message: "Nothing to update" });
+  }
+
+  const sql = `
+    UPDATE place_reviews
+    SET ${updates.join(", ")}
+    WHERE id = ? AND place_id = ?
+  `;
+  params.push(reviewId, placeId);
+
+  resolveRequestUser(req, (userErr, requester) => {
+    if (userErr) {
+      console.error("DB error (resolve review user):", userErr);
+      return res.status(500).json({ ok: false, message: "DB error" });
+    }
+
+    const reviewSql = `
+      SELECT id, user_id, user_login
+      FROM place_reviews
+      WHERE id = ? AND place_id = ?
+      LIMIT 1
+    `;
+
+    db.get(reviewSql, [reviewId, placeId], (reviewErr, reviewRow) => {
+      if (reviewErr) {
+        console.error("DB error (get review for update):", reviewErr);
+        return res.status(500).json({ ok: false, message: "DB error" });
+      }
+
+      if (!reviewRow) {
+        return res.status(404).json({ ok: false, message: "Review not found" });
+      }
+
+      const isOwner =
+        (requester.id && reviewRow.user_id && requester.id === reviewRow.user_id) ||
+        (requester.login && reviewRow.user_login && requester.login === reviewRow.user_login);
+
+      if (!requester.isAdmin && !isOwner) {
+        return res.status(403).json({ ok: false, message: "Not enough permissions" });
+      }
+
+      db.run(sql, params, function (err) {
+        if (err) {
+          console.error("DB error (update review):", err);
+          return res.status(500).json({ ok: false, message: "DB error" });
+        }
+
+        if (this.changes === 0) {
+          return res.status(404).json({ ok: false, message: "Review not found" });
+        }
+
+        const fetchSql = `
+          SELECT
+            r.id,
+            r.place_id,
+            r.user_id,
+            r.user_login,
+            r.user_name,
+            r.rating,
+            r.text,
+            r.images,
+            r.created_at,
+            COALESCE(u1.avatar, u2.avatar) AS user_avatar
+          FROM place_reviews r
+          LEFT JOIN users u1 ON u1.id = r.user_id
+          LEFT JOIN users u2 ON (r.user_id IS NULL AND u2.login = r.user_login)
+          WHERE r.id = ? AND r.place_id = ?
+          LIMIT 1
+        `;
+
+        db.get(fetchSql, [reviewId, placeId], (getErr, row) => {
+          if (getErr) {
+            console.error("DB error (fetch updated review):", getErr);
+            return res.status(500).json({ ok: false, message: "DB error" });
+          }
+
+          recalcPlaceRating(placeId, (recalcErr, stats) => {
+            if (recalcErr) console.error("DB error (recalc after review update):", recalcErr);
+            return res.json({
+              ok: true,
+              review: row ? mapReviewRow(row, req) : null,
+              stats: stats || null,
+            });
+          });
+        });
+      });
+    });
+  });
+});
+
+app.delete("/api/places/:placeId/reviews/:reviewId", (req, res) => {
+  const placeId = Number(req.params.placeId);
+  const reviewId = Number(req.params.reviewId);
+  if (!Number.isInteger(placeId) || !Number.isInteger(reviewId)) {
+    return res.status(400).json({ ok: false, message: "Invalid id" });
+  }
+
+  resolveRequestUser(req, (userErr, requester) => {
+    if (userErr) {
+      console.error("DB error (resolve review user):", userErr);
+      return res.status(500).json({ ok: false, message: "DB error" });
+    }
+
+    const reviewSql = `
+      SELECT id, user_id, user_login
+      FROM place_reviews
+      WHERE id = ? AND place_id = ?
+      LIMIT 1
+    `;
+
+    db.get(reviewSql, [reviewId, placeId], (reviewErr, reviewRow) => {
+      if (reviewErr) {
+        console.error("DB error (get review for delete):", reviewErr);
+        return res.status(500).json({ ok: false, message: "DB error" });
+      }
+
+      if (!reviewRow) {
+        return res.status(404).json({ ok: false, message: "Review not found" });
+      }
+
+      const isOwner =
+        (requester.id && reviewRow.user_id && requester.id === reviewRow.user_id) ||
+        (requester.login && reviewRow.user_login && requester.login === reviewRow.user_login);
+
+      if (!requester.isAdmin && !isOwner) {
+        return res.status(403).json({ ok: false, message: "Not enough permissions" });
+      }
+
+      db.run(
+        "DELETE FROM place_reviews WHERE id = ? AND place_id = ?",
+        [reviewId, placeId],
+        function (err) {
+          if (err) {
+            console.error("DB error (delete review):", err);
+            return res.status(500).json({ ok: false, message: "DB error" });
+          }
+
+          if (this.changes === 0) {
+            return res.status(404).json({ ok: false, message: "Review not found" });
+          }
+
+          recalcPlaceRating(placeId, (recalcErr, stats) => {
+            if (recalcErr) console.error("DB error (recalc after review delete):", recalcErr);
+            return res.json({
+              ok: true,
+              stats: stats || null,
             });
           });
         }
       );
     });
-
-    return; // важно: чтобы код ниже не продолжал выполняться
   });
 });
 
-// ===================== СТАРТ СЕРВЕРА =====================
+// ===================== SERVER START =====================
 
 app.listen(PORT, HOST, () => {
   console.log(`Server is running on http://${HOST}:${PORT}`);

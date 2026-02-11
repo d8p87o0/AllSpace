@@ -29,6 +29,31 @@ const emptyForm = {
   phone: "", 
 };
 
+function formatReviewDate(value) {
+  if (!value) return "";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return String(value);
+
+  return date.toLocaleDateString("ru-RU", {
+    day: "numeric",
+    month: "short",
+    year: "numeric",
+  });
+}
+
+function normalizeReviewDraft(review) {
+  const ratingValue = Number(review?.rating);
+  const safeRating = Number.isFinite(ratingValue)
+    ? Math.min(5, Math.max(1, Math.round(ratingValue)))
+    : 5;
+
+  return {
+    ...review,
+    draftText: review?.text || "",
+    draftRating: safeRating,
+  };
+}
+
 export default function AdminPage() {
   const navigate = useNavigate();
 
@@ -58,6 +83,11 @@ export default function AdminPage() {
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
   const [deleteTarget, setDeleteTarget] = useState(null); // место для поп-апа удаления
+  const [placeReviews, setPlaceReviews] = useState([]);
+  const [placeReviewsLoading, setPlaceReviewsLoading] = useState(false);
+  const [placeReviewsError, setPlaceReviewsError] = useState("");
+  const [reviewSavingId, setReviewSavingId] = useState(null);
+  const [reviewDeletingId, setReviewDeletingId] = useState(null);
 
   // === images: отдельное состояние для картинок выбранного места ===
   /**
@@ -154,10 +184,49 @@ export default function AdminPage() {
     }
   };
 
+  const loadPlaceReviews = async (placeId) => {
+    if (!placeId) {
+      setPlaceReviews([]);
+      setPlaceReviewsError("");
+      return;
+    }
+
+    setPlaceReviewsLoading(true);
+    setPlaceReviewsError("");
+
+    try {
+      const res = await fetch(`${API_BASE}/api/places/${placeId}/reviews`);
+      const data = await res.json();
+      if (!data.ok) {
+        setPlaceReviewsError(data.message || "Не удалось загрузить отзывы");
+        setPlaceReviews([]);
+        return;
+      }
+
+      const list = Array.isArray(data.reviews) ? data.reviews : [];
+      setPlaceReviews(list.map((review) => normalizeReviewDraft(review)));
+    } catch (e) {
+      console.error("Ошибка загрузки отзывов для админки:", e);
+      setPlaceReviewsError("Ошибка соединения с сервером");
+      setPlaceReviews([]);
+    } finally {
+      setPlaceReviewsLoading(false);
+    }
+  };
+
   useEffect(() => {
     loadPlaces();
     loadPendingPlaces();
   }, []);
+
+  useEffect(() => {
+    if (!selectedPlaceId) {
+      setPlaceReviews([]);
+      setPlaceReviewsError("");
+      return;
+    }
+    loadPlaceReviews(selectedPlaceId);
+  }, [selectedPlaceId]);
 
   const selectedPlace =
     places.find((p) => p.id === selectedPlaceId) ||
@@ -633,6 +702,118 @@ export default function AdminPage() {
     }
   };
 
+  const handleReviewDraftChange = (reviewId, field, value) => {
+    setPlaceReviews((prev) =>
+      prev.map((review) =>
+        review.id === reviewId ? { ...review, [field]: value } : review
+      )
+    );
+  };
+
+  const handleReviewReset = (reviewId) => {
+    setPlaceReviews((prev) =>
+      prev.map((review) =>
+        review.id === reviewId
+          ? normalizeReviewDraft(review)
+          : review
+      )
+    );
+  };
+
+  const handleReviewSave = async (review) => {
+    if (!selectedPlaceId) return;
+
+    const textValue = String(review.draftText || "").trim();
+    const ratingValue = Number(review.draftRating);
+
+    if (!textValue) {
+      setPlaceReviewsError("Текст отзыва обязателен");
+      return;
+    }
+
+    if (!Number.isInteger(ratingValue) || ratingValue < 1 || ratingValue > 5) {
+      setPlaceReviewsError("Оценка должна быть от 1 до 5");
+      return;
+    }
+
+    setPlaceReviewsError("");
+    setReviewSavingId(review.id);
+
+    try {
+      const res = await fetch(
+        `${API_BASE}/api/places/${selectedPlaceId}/reviews/${review.id}`,
+        {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            text: textValue,
+            rating: ratingValue,
+            userId: user?.id ?? null,
+            userLogin: user?.login ?? null,
+          }),
+        }
+      );
+
+      const data = await res.json();
+      if (!data.ok) {
+        setPlaceReviewsError(data.message || "Не удалось сохранить отзыв");
+        return;
+      }
+
+      if (data.review) {
+        setPlaceReviews((prev) =>
+          prev.map((item) =>
+            item.id === review.id ? normalizeReviewDraft(data.review) : item
+          )
+        );
+      }
+
+      await loadPlaces();
+    } catch (e) {
+      console.error("Ошибка обновления отзыва:", e);
+      setPlaceReviewsError("Ошибка соединения с сервером");
+    } finally {
+      setReviewSavingId(null);
+    }
+  };
+
+  const handleReviewDelete = async (reviewId) => {
+    if (!selectedPlaceId) return;
+    const ok = window.confirm("Удалить этот отзыв?");
+    if (!ok) return;
+
+    setPlaceReviewsError("");
+    setReviewDeletingId(reviewId);
+
+    try {
+      const res = await fetch(
+        `${API_BASE}/api/places/${selectedPlaceId}/reviews/${reviewId}`,
+        {
+          method: "DELETE",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            userId: user?.id ?? null,
+            userLogin: user?.login ?? null,
+          }),
+        }
+      );
+
+      const data = await res.json();
+      if (!data.ok) {
+        setPlaceReviewsError(data.message || "Не удалось удалить отзыв");
+        return;
+      }
+
+      setPlaceReviews((prev) => prev.filter((review) => review.id !== reviewId));
+      await loadPlaces();
+    } catch (e) {
+      console.error("Ошибка удаления отзыва:", e);
+      setPlaceReviewsError("Ошибка соединения с сервером");
+    } finally {
+      setReviewDeletingId(null);
+    }
+  };
+
   const confirmDelete = async () => {
     if (!deleteTarget) return;
   
@@ -1035,6 +1216,146 @@ export default function AdminPage() {
                     Сохранить изменения
                   </button>
                 </form>
+              )}
+            </div>
+
+            {/* Отзывы места */}
+            <div className="admin__card">
+              <h2 className="admin__card-title">Отзывы места</h2>
+              {!selectedPlaceId ? (
+                <p className="admin__hint">
+                  Выберите место, чтобы управлять отзывами.
+                </p>
+              ) : (
+                <div className="admin-reviews">
+                  <div className="admin-reviews__header">
+                    <div className="admin-reviews__count">
+                      Всего: {placeReviews.length}
+                    </div>
+                    <button
+                      type="button"
+                      className="admin-reviews__refresh"
+                      onClick={() => loadPlaceReviews(selectedPlaceId)}
+                      disabled={placeReviewsLoading}
+                    >
+                      Обновить
+                    </button>
+                  </div>
+
+                  {placeReviewsError && (
+                    <div className="admin__alert admin__alert--error">
+                      {placeReviewsError}
+                    </div>
+                  )}
+
+                  {placeReviewsLoading ? (
+                    <p className="admin__hint">Загружаем отзывы...</p>
+                  ) : placeReviews.length ? (
+                    <div className="admin-reviews__list">
+                      {placeReviews.map((review) => {
+                        const displayName =
+                          review.userName || review.userLogin || "Гость";
+                        const reviewDate = formatReviewDate(review.createdAt);
+                        const metaParts = [];
+                        if (review.userLogin) metaParts.push(`@${review.userLogin}`);
+                        if (reviewDate) metaParts.push(reviewDate);
+
+                        return (
+                          <div key={review.id} className="admin-review">
+                            <div className="admin-review__header">
+                              <div>
+                                <div className="admin-review__name">
+                                  {displayName}
+                                </div>
+                                {metaParts.length > 0 && (
+                                  <div className="admin-review__meta">
+                                    {metaParts.join(" · ")}
+                                  </div>
+                                )}
+                              </div>
+                              <div className="admin-review__rating">
+                                <input
+                                  type="number"
+                                  min="1"
+                                  max="5"
+                                  className="admin-input admin-review__rating-input"
+                                  value={review.draftRating}
+                                  onChange={(e) =>
+                                    handleReviewDraftChange(
+                                      review.id,
+                                      "draftRating",
+                                      e.target.value
+                                    )
+                                  }
+                                />
+                              </div>
+                            </div>
+
+                            <textarea
+                              className="admin-textarea admin-review__text"
+                              value={review.draftText}
+                              onChange={(e) =>
+                                handleReviewDraftChange(
+                                  review.id,
+                                  "draftText",
+                                  e.target.value
+                                )
+                              }
+                              rows={3}
+                            />
+
+                            {Array.isArray(review.images) &&
+                              review.images.length > 0 && (
+                                <div className="admin-review__images">
+                                  {review.images.map((img, index) => (
+                                    <img
+                                      key={`${review.id}-img-${index}`}
+                                      src={resolveMediaUrl(img)}
+                                      alt=""
+                                      className="admin-review__image"
+                                    />
+                                  ))}
+                                </div>
+                              )}
+
+                            <div className="admin-review__actions">
+                              <button
+                                type="button"
+                                className="admin-review__btn"
+                                onClick={() => handleReviewSave(review)}
+                                disabled={reviewSavingId === review.id}
+                              >
+                                {reviewSavingId === review.id
+                                  ? "Сохраняем..."
+                                  : "Сохранить"}
+                              </button>
+                              <button
+                                type="button"
+                                className="admin-review__btn admin-review__btn--ghost"
+                                onClick={() => handleReviewReset(review.id)}
+                                disabled={reviewSavingId === review.id}
+                              >
+                                Сбросить
+                              </button>
+                              <button
+                                type="button"
+                                className="admin-review__btn admin-review__btn--danger"
+                                onClick={() => handleReviewDelete(review.id)}
+                                disabled={reviewDeletingId === review.id}
+                              >
+                                {reviewDeletingId === review.id
+                                  ? "Удаляем..."
+                                  : "Удалить"}
+                              </button>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  ) : (
+                    <p className="admin__hint">Отзывов пока нет.</p>
+                  )}
+                </div>
               )}
             </div>
 
