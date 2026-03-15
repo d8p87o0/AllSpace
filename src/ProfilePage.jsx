@@ -3,9 +3,12 @@ import { useNavigate } from "react-router-dom";
 import placesData from "./places.json";
 import "./App.css";
 
-const API_BASE = import.meta.env.VITE_API_BASE || (import.meta.env.PROD ? "/api" : "http://localhost:3001");
+const API_BASE =
+  import.meta.env.VITE_API_BASE ||
+  (import.meta.env.PROD ? "" : "http://localhost:3001");
 const FAVORITES_PREFIX = "favoritePlaces_";
 const getFavoritesKey = (login) => `${FAVORITES_PREFIX}${login}`;
+
 
 // стабильный "случайный" цвет по строке (login/id)
 function stringToColor(str = "") {
@@ -13,6 +16,20 @@ function stringToColor(str = "") {
   for (let i = 0; i < str.length; i++) hash = str.charCodeAt(i) + ((hash << 5) - hash);
   const hue = Math.abs(hash) % 360;
   return `hsl(${hue} 70% 45%)`;
+}
+
+function resolveMediaUrl(url) {
+  if (!url) return url;
+  if (/^https?:\/\//i.test(url)) return url;
+  if (url.startsWith("/photos/") || url.startsWith("/avatars/")) return `${API_BASE}${url}`;
+  return url;
+}
+
+function getPlaceCover(place) {
+  const fromImage = place?.image;
+  const fromGallery =
+    Array.isArray(place?.images) && place.images.length ? place.images[0] : null;
+  return fromImage || fromGallery || "/no-photo.png";
 }
 
 function getInitials(user) {
@@ -51,6 +68,10 @@ export function ProfilePage({ onLogout }) {
   const [user, setUser] = useState(null);
   const [favoritePlaces, setFavoritePlaces] = useState([]);
 
+  const [draftArticles, setDraftArticles] = useState([]);
+  const [pendingArticles, setPendingArticles] = useState([]);
+  const [articlesLoading, setArticlesLoading] = useState(false);
+
   const [isEditing, setIsEditing] = useState(false);
   const [editForm, setEditForm] = useState({
     firstName: "",
@@ -74,65 +95,107 @@ export function ProfilePage({ onLogout }) {
   }, [user]);
 
   useEffect(() => {
-    let currentUser = null;
-
-    try {
-      const raw = localStorage.getItem("user");
-      if (raw) {
-        currentUser = JSON.parse(raw);
-        setUser(currentUser);
-      }
-    } catch (e) {
-      console.error("Не удалось прочитать user из localStorage:", e);
-    }
-
-    if (!currentUser?.login) return;
-
-    // если нет id в localStorage — подтянем с сервера
-    const ensureUserId = async () => {
-      if (currentUser?.id) return;
+    let cancelled = false;
+  
+    const run = async () => {
+      let currentUser = null;
+  
       try {
-        const res = await fetch(`${API_BASE}/api/users/by-login/${encodeURIComponent(currentUser.login)}`);
-        const data = await res.json();
-        if (data.ok && data.user?.id) {
-          const merged = { ...currentUser, ...data.user };
-          setUser(merged);
-          localStorage.setItem("user", JSON.stringify(merged));
+        const raw = localStorage.getItem("user");
+        if (raw) {
+          currentUser = JSON.parse(raw);
+          if (!cancelled) setUser(currentUser);
         }
       } catch (e) {
-        console.error("Не удалось получить user id:", e);
+        console.error("Не удалось прочитать user из localStorage:", e);
       }
-    };
-
-    ensureUserId();
-
-    const favoritesKey = getFavoritesKey(currentUser.login);
-
-    const loadFavorites = async () => {
-      try {
-        const rawFav = localStorage.getItem(favoritesKey);
-        const ids = rawFav ? JSON.parse(rawFav) : [];
-        const normalizedIds = Array.isArray(ids) ? ids.map(Number) : [];
-
-        let places = [];
+  
+      if (!currentUser?.login) return;
+  
+      // 1) подтянуть id (если нет)
+      const ensureUserId = async () => {
+        if (currentUser?.id) return currentUser;
         try {
-          const res = await fetch(`${API_BASE}/api/places`);
+          const res = await fetch(
+            `${API_BASE}/api/users/by-login/${encodeURIComponent(currentUser.login)}`
+          );
           const data = await res.json();
-          if (data.ok) places = data.places || [];
+          if (data.ok && data.user?.id) {
+            const merged = { ...currentUser, ...data.user };
+            if (!cancelled) setUser(merged);
+            localStorage.setItem("user", JSON.stringify(merged));
+            return merged;
+          }
         } catch (e) {
-          console.error("Ошибка запроса /api/places:", e);
+          console.error("Не удалось получить user id:", e);
         }
-
-        if (!places.length && (placesData || []).length) places = placesData;
-
-        const favPlaces = places.filter((p) => normalizedIds.includes(Number(p.id)));
-        setFavoritePlaces(favPlaces);
-      } catch (e) {
-        console.error("Не удалось прочитать избранное:", e);
-      }
+        return currentUser;
+      };
+  
+      // 2) загрузить “мои статьи”
+      const loadMyArticles = async (u) => {
+        if (!u?.id && !u?.login) return;
+        if (!cancelled) setArticlesLoading(true);
+        try {
+          const by = u.id
+            ? `authorId=${u.id}`
+            : `authorLogin=${encodeURIComponent(u.login)}`;
+  
+          const r1 = await fetch(`${API_BASE}/api/articles?status=draft&${by}`);
+          const d1 = await r1.json();
+          if (!cancelled) setDraftArticles(d1.ok ? (d1.articles || []) : []);
+  
+          const r2 = await fetch(`${API_BASE}/api/articles?status=pending&${by}`);
+          const d2 = await r2.json();
+          if (!cancelled) setPendingArticles(d2.ok ? (d2.articles || []) : []);
+        } catch (e) {
+          console.error(e);
+          if (!cancelled) {
+            setDraftArticles([]);
+            setPendingArticles([]);
+          }
+        } finally {
+          if (!cancelled) setArticlesLoading(false);
+        }
+      };
+  
+      const u2 = await ensureUserId();
+      await loadMyArticles(u2);
+  
+      // 3) избранные места
+      const favoritesKey = getFavoritesKey(currentUser.login);
+      const loadFavorites = async () => {
+        try {
+          const rawFav = localStorage.getItem(favoritesKey);
+          const ids = rawFav ? JSON.parse(rawFav) : [];
+          const normalizedIds = Array.isArray(ids) ? ids.map(Number) : [];
+  
+          let places = [];
+          try {
+            const res = await fetch(`${API_BASE}/api/places`);
+            const data = await res.json();
+            if (data.ok) places = data.places || [];
+          } catch (e) {
+            console.error("Ошибка запроса /api/places:", e);
+          }
+  
+          if (!places.length && (placesData || []).length) places = placesData;
+  
+          const favPlaces = places.filter((p) => normalizedIds.includes(Number(p.id)));
+          if (!cancelled) setFavoritePlaces(favPlaces);
+        } catch (e) {
+          console.error("Не удалось прочитать избранное:", e);
+        }
+      };
+  
+      await loadFavorites();
     };
-
-    loadFavorites();
+  
+    run();
+  
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   const handleLogout = () => {
@@ -457,6 +520,100 @@ export function ProfilePage({ onLogout }) {
           )}
         </div>
 
+        <div className="profile__favorites">
+          <div className="profile__favorites-header">
+            <h2 className="profile__favorites-title">Мои статьи</h2>
+          </div>
+
+          {articlesLoading ? (
+            <p className="profile__favorites-empty">Загружаем...</p>
+          ) : (
+            <>
+              <h3 style={{ margin: "16px 0 8px" }}>Черновики</h3>
+              {!draftArticles.length ? (
+                <p className="profile__favorites-empty">Черновиков нет.</p>
+              ) : (
+                <div className="admin__moderation-list">
+                  {draftArticles.map((a) => (
+                    <div key={a.id} className="admin__moderation-item">
+                      <div className="admin__moderation-info">
+                        <span className="admin__moderation-name">{a.title}</span>
+                      </div>
+                      <div className="admin__moderation-actions">
+                        <button
+                          type="button"
+                          className="admin__moderation-open"
+                          onClick={() => navigate(`/submit-article?edit=${a.id}`)}
+                        >
+                          Продолжить
+                        </button>
+
+                        <button
+                          type="button"
+                          className="admin__moderation-reject"
+                          onClick={async () => {
+                            const ok = window.confirm(`Удалить черновик "${a.title}"?`);
+                            if (!ok) return;
+
+                            const r = await fetch(`${API_BASE}/api/articles/${a.id}`, {
+                              method: "DELETE",
+                              headers: { "Content-Type": "application/json" },
+                              body: JSON.stringify({ userId: user?.id ?? null, userLogin: user?.login ?? null }),
+                            });
+                            const d = await r.json();
+                            if (!d.ok) return alert(d.message || "Не удалось удалить");
+
+                            // перезагрузка списков
+                            const by = user.id ? `authorId=${user.id}` : `authorLogin=${encodeURIComponent(user.login)}`;
+                            const r1 = await fetch(`${API_BASE}/api/articles?status=draft&${by}`);
+                            const d1 = await r1.json();
+                            setDraftArticles(d1.ok ? (d1.articles || []) : []);
+                          }}
+                        >
+                          Удалить
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              <h3 style={{ margin: "16px 0 8px" }}>На модерации</h3>
+              {!pendingArticles.length ? (
+                <p className="profile__favorites-empty">Пока ничего.</p>
+              ) : (
+                <div className="admin__moderation-list">
+                  {pendingArticles.map((a) => (
+                    <div key={a.id} className="admin__moderation-item">
+                      <div className="admin__moderation-info">
+                        <span className="admin__moderation-name">{a.title}</span>
+                      </div>
+                      <div className="admin__moderation-actions">
+                        <button
+                          type="button"
+                          className="admin__moderation-open"
+                          onClick={() => navigate(`/submit-article?edit=${a.id}`)}
+                        >
+                          Открыть
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              <button
+                type="button"
+                className="profile__btn profile__btn--primary"
+                style={{ marginTop: 12 }}
+                onClick={() => navigate("/submit-article")}
+              >
+                Написать статью
+              </button>
+            </>
+          )}
+        </div>
+
         {/* Избранные места */}
         <div className="profile__favorites">
           <div className="profile__favorites-header">
@@ -473,7 +630,14 @@ export function ProfilePage({ onLogout }) {
               {favoritePlaces.map((place) => (
                 <article key={place.id} className="place-card" onClick={() => navigate(`/place/${place.id}`)}>
                   <div className="place-card__image-wrapper">
-                    <img src={place.image} alt={place.name} className="place-card__image" />
+                    <img
+                      src={resolveMediaUrl(getPlaceCover(place))}
+                      alt={place.name}
+                      className="place-card__image"
+                      onError={(e) => {
+                        e.currentTarget.src = "/no-photo.png";
+                      }}
+                    />
                     {place.badge && <span className="place-card__badge">{place.badge}</span>}
                   </div>
 

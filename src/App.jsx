@@ -1,4 +1,4 @@
-﻿import { useEffect, useState, useRef } from "react";
+﻿import { useEffect, useState, useRef, useMemo } from "react";
 import { Routes, Route, useNavigate } from "react-router-dom";
 // import placesData from "./places.json"; // больше не нужно
 import PlacePage from "./PlacePage.jsx";
@@ -9,9 +9,14 @@ import VerifyEmailPage from "./VerifyEmailPage.jsx";
 import { ProfilePage } from "./ProfilePage.jsx";
 import AdminPage from "./Admin.jsx";
 import SubmitPlacePage from "./SubmitPlace.jsx";
+import SubmitArticlePage from "./SubmitArticle.jsx";
+import ArticlePage from "./ArticlePage.jsx";
+import { useLocation } from "react-router-dom";
 
 
-const API_BASE = import.meta.env.VITE_API_BASE || (import.meta.env.PROD ? "/api" : "http://localhost:3001");
+const API_BASE =
+  import.meta.env.VITE_API_BASE ||
+  (import.meta.env.PROD ? "" : "http://localhost:3001");
 
 function resolveMediaUrl(url) {
   if (!url) return url;
@@ -24,6 +29,72 @@ function resolveMediaUrl(url) {
 
   // например /p1p1.png из public
   return url;
+}
+
+function formatArticleDate(value) {
+  if (!value) return "";
+  const num = Number(value);
+
+  // unix seconds
+  if (Number.isFinite(num) && String(value).length <= 10) {
+    const d = new Date(num * 1000);
+    if (!Number.isNaN(d.getTime())) {
+      return d.toLocaleDateString("ru-RU", {
+        day: "numeric",
+        month: "short",
+        year: "numeric",
+      });
+    }
+  }
+
+  const d = new Date(value);
+  if (!Number.isNaN(d.getTime())) {
+    return d.toLocaleDateString("ru-RU", {
+      day: "numeric",
+      month: "short",
+      year: "numeric",
+    });
+  }
+
+  return "";
+}
+
+async function trackEvent(event, payload = {}) {
+  try {
+    const VISITOR_KEY = "analytics_visitor_id";
+    const SESSION_KEY = "analytics_session_id";
+
+    let visitorId = localStorage.getItem(VISITOR_KEY);
+    if (!visitorId) {
+      visitorId =
+        "v_" + Date.now().toString(36) + "_" + Math.random().toString(36).slice(2, 10);
+      localStorage.setItem(VISITOR_KEY, visitorId);
+    }
+
+    let sessionId = sessionStorage.getItem(SESSION_KEY);
+    if (!sessionId) {
+      sessionId =
+        "s_" + Date.now().toString(36) + "_" + Math.random().toString(36).slice(2, 10);
+      sessionStorage.setItem(SESSION_KEY, sessionId);
+    }
+
+    await fetch(`${API_BASE}/api/analytics/event`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        event,
+        payload,
+        path: window.location.pathname,
+        referrer: document.referrer || "",
+        userAgent: navigator.userAgent,
+        visitorId,
+        sessionId,
+        ts: Date.now(),
+      }),
+    });
+  } catch (e) {
+    console.error("Analytics track error:", e);
+  }
 }
 
 function getCover(place) {
@@ -65,10 +136,21 @@ function shuffle(array) {
 function App() {
   const navigate = useNavigate();
 
+  const location = useLocation();
+
+  const hideMainHeader = useMemo(() => {
+    const p = location.pathname;
+    return p.startsWith("/submit-article") || p.startsWith("/article/");
+  }, [location.pathname]);
+
   const [orderedCities, setOrderedCities] = useState([]);
   const [visibleCount, setVisibleCount] = useState(0);
 
   const [isLoggedIn, setIsLoggedIn] = useState(false);
+
+  const [showTelegramPopup, setShowTelegramPopup] = useState(false);
+  const popupShownRef = useRef(false);
+  const sessionStartedAtRef = useRef(Date.now());
 
   
   // ======= МЕСТА ИЗ API =======
@@ -107,6 +189,199 @@ function App() {
     
     fetchPlaces();
   }, []);
+
+  useEffect(() => {
+    trackEvent("session_start", {
+      pathname: location.pathname,
+    });
+  
+    const startedAt = sessionStartedAtRef.current;
+  
+    const sendSessionEnd = () => {
+      try {
+        const startedAt = Number(sessionStorage.getItem("analytics_session_started_at") || Date.now());
+        const durationSec = Math.max(0, Math.round((Date.now() - startedAt) / 1000));
+    
+        const VISITOR_KEY = "analytics_visitor_id";
+        const SESSION_KEY = "analytics_session_id";
+    
+        let visitorId = localStorage.getItem(VISITOR_KEY);
+        if (!visitorId) {
+          visitorId =
+            "v_" + Date.now().toString(36) + "_" + Math.random().toString(36).slice(2, 10);
+          localStorage.setItem(VISITOR_KEY, visitorId);
+        }
+    
+        let sessionId = sessionStorage.getItem(SESSION_KEY);
+        if (!sessionId) {
+          sessionId =
+            "s_" + Date.now().toString(36) + "_" + Math.random().toString(36).slice(2, 10);
+          sessionStorage.setItem(SESSION_KEY, sessionId);
+        }
+    
+        const body = JSON.stringify({
+          event: "session_end",
+          payload: {
+            durationSec,
+          },
+          path: window.location.pathname,
+          referrer: document.referrer || "",
+          userAgent: navigator.userAgent,
+          visitorId,
+          sessionId,
+          ts: Date.now(),
+        });
+    
+        if (navigator.sendBeacon) {
+          const blob = new Blob([body], { type: "application/json" });
+          navigator.sendBeacon(`${API_BASE}/api/analytics/event`, blob);
+        } else {
+          fetch(`${API_BASE}/api/analytics/event`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body,
+            keepalive: true,
+          }).catch(() => {});
+        }
+      } catch (e) {
+        console.error("sendSessionEnd error:", e);
+      }
+    };
+  
+    window.addEventListener("beforeunload", sendSessionEnd);
+    return () => {
+      sendSessionEnd();
+      window.removeEventListener("beforeunload", sendSessionEnd);
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!sessionStorage.getItem("analytics_session_started_at")) {
+      sessionStorage.setItem("analytics_session_started_at", String(Date.now()));
+    }
+  
+    const handleBeforeUnload = () => {
+      sendSessionEnd();
+    };
+  
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === "hidden") {
+        sendSessionEnd();
+      }
+    };
+  
+    window.addEventListener("beforeunload", handleBeforeUnload);
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+  
+    return () => {
+      window.removeEventListener("beforeunload", handleBeforeUnload);
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
+    };
+  }, []);
+
+  useEffect(() => {
+    const VISITOR_KEY = "analytics_visitor_id";
+    const SESSION_KEY = "analytics_session_id";
+  
+    let visitorId = localStorage.getItem(VISITOR_KEY);
+    if (!visitorId) {
+      visitorId =
+        "v_" + Date.now().toString(36) + "_" + Math.random().toString(36).slice(2, 10);
+      localStorage.setItem(VISITOR_KEY, visitorId);
+    }
+  
+    let sessionId = sessionStorage.getItem(SESSION_KEY);
+    if (!sessionId) {
+      sessionId =
+        "s_" + Date.now().toString(36) + "_" + Math.random().toString(36).slice(2, 10);
+      sessionStorage.setItem(SESSION_KEY, sessionId);
+    }
+  
+    if (!sessionStorage.getItem("analytics_session_started_at")) {
+      sessionStorage.setItem("analytics_session_started_at", String(Date.now()));
+    }
+  
+    fetch(`${API_BASE}/api/analytics/event`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        event: "session_start",
+        payload: {},
+        path: window.location.pathname,
+        referrer: document.referrer || "",
+        userAgent: navigator.userAgent,
+        visitorId,
+        sessionId,
+        ts: Date.now(),
+      }),
+    }).catch((e) => {
+      console.error("session_start error:", e);
+    });
+  }, []);
+
+  useEffect(() => {
+    const blockedPaths = ["/admin", "/login", "/register", "/submit-place", "/submit-article"];
+    if (blockedPaths.some((p) => location.pathname.startsWith(p))) return;
+    if (location.pathname.startsWith("/article/")) return;
+  
+    const storageKey = "tg_popup_last_shown_at";
+  
+    try {
+      const raw = localStorage.getItem(storageKey);
+      if (raw) {
+        const lastShownAt = Number(raw);
+        const threeDays = 3 * 24 * 60 * 60 * 1000;
+        if (Date.now() - lastShownAt < threeDays) return;
+      }
+    } catch {}
+  
+    let timer = setTimeout(() => {
+      if (!popupShownRef.current) {
+        popupShownRef.current = true;
+        setShowTelegramPopup(true);
+        try {
+          localStorage.setItem(storageKey, String(Date.now()));
+        } catch {}
+        trackEvent("tg_popup_shown");
+      }
+    }, 14000);
+  
+    const onScroll = () => {
+      if (popupShownRef.current) return;
+  
+      const scrollTop = window.scrollY || 0;
+      const docHeight = document.documentElement.scrollHeight - window.innerHeight;
+      const progress = docHeight > 0 ? scrollTop / docHeight : 0;
+  
+      if (progress >= 0.45) {
+        popupShownRef.current = true;
+        clearTimeout(timer);
+        setShowTelegramPopup(true);
+        try {
+          localStorage.setItem(storageKey, String(Date.now()));
+        } catch {}
+        trackEvent("tg_popup_shown", { trigger: "scroll_45" });
+      }
+    };
+  
+    window.addEventListener("scroll", onScroll, { passive: true });
+  
+    return () => {
+      clearTimeout(timer);
+      window.removeEventListener("scroll", onScroll);
+    };
+  }, [location.pathname]);
+
+  const handleTelegramPopupClose = () => {
+    setShowTelegramPopup(false);
+    trackEvent("tg_popup_closed");
+  };
+  
+  const handleTelegramSubscribeClick = () => {
+    trackEvent("tg_popup_subscribe_click");
+    window.open("https://t.me/allspacenews", "_blank", "noopener,noreferrer");
+    setShowTelegramPopup(false);
+  };
   
   // ======= ФИЛЬТРЫ =======
   // активный таб (подсветка)
@@ -177,6 +452,65 @@ function App() {
         .filter(Boolean)
     )
   );
+
+  // ДОБАВЬ ЭТИ РЕФЫ в App() рядом с другими useRef:
+const topMarqueeTrackRef = useRef(null);
+const bottomMarqueeTrackRef = useRef(null);
+
+// список городов для бегущих строк:
+// если из БД города не пришли — используем CITIES
+const tickerCities = useMemo(
+  () => CITIES.map((c) => c.name),
+  []
+);
+
+const tickerText = useMemo(() => {
+  const base = tickerCities.join(" • ");
+  return `${base} • ${base} • ${base}`;
+}, [tickerCities]);
+
+// ДОБАВЬ ЭТОТ useEffect в App() (после остальных useEffect — норм)
+useEffect(() => {
+  const top = topMarqueeTrackRef.current;
+  const bottom = bottomMarqueeTrackRef.current;
+  if (!top || !bottom) return;
+
+  let raf = 0;
+
+  const update = () => {
+    const y = window.scrollY || 0;
+  
+    const topLoop = Math.max(1, top.scrollWidth / 2);
+    const bottomLoop = Math.max(1, bottom.scrollWidth / 2);
+  
+    const speedTop = 0.35;
+    const speedBottom = 0.35;
+  
+    const xTop = (y * speedTop) % topLoop;          // 0..topLoop
+    const xBottom = (y * speedBottom) % bottomLoop; // 0..bottomLoop
+  
+    // ВСЕГДА влево (чтобы не было "пустоты" слева)
+    top.style.transform = `translate3d(${-xTop}px, 0, 0)`;
+  
+    // нижнюю "разворачиваем" фазой: стартуем со смещения -bottomLoop
+    bottom.style.transform = `translate3d(${xBottom - bottomLoop}px, 0, 0)`;
+  };
+
+  const onScroll = () => {
+    cancelAnimationFrame(raf);
+    raf = requestAnimationFrame(update);
+  };
+
+  update();
+  window.addEventListener("scroll", onScroll, { passive: true });
+  window.addEventListener("resize", update);
+
+  return () => {
+    cancelAnimationFrame(raf);
+    window.removeEventListener("scroll", onScroll);
+    window.removeEventListener("resize", update);
+  };
+}, [tickerText]);
 
   // при первой загрузке данных из БД — включаем все опции как выбранные
   useEffect(() => {
@@ -457,6 +791,31 @@ function App() {
     document.body.appendChild(script);
   }, []);
 
+    // ======= ARTICLES (approved) =======
+    const [articles, setArticles] = useState([]);
+    const [articlesLoading, setArticlesLoading] = useState(false);
+    const [articlesError, setArticlesError] = useState("");
+  
+    useEffect(() => {
+      const fetchArticles = async () => {
+        setArticlesLoading(true);
+        setArticlesError("");
+        try {
+          const res = await fetch(`${API_BASE}/api/articles`);
+          const data = await res.json();
+          if (!data.ok) throw new Error(data.message || "Не удалось загрузить статьи");
+          setArticles(data.articles || []);
+        } catch (e) {
+          console.error("Ошибка загрузки статей:", e);
+          setArticlesError("Не удалось загрузить статьи");
+        } finally {
+          setArticlesLoading(false);
+        }
+      };
+  
+      fetchArticles();
+    }, []);
+
   // --- анимация городов ---
   useEffect(() => {
     const fixed = CITIES.slice(0, 4);
@@ -552,23 +911,47 @@ function App() {
     }
   };
 
+  const handleSubmitArticleClick = () => {
+    try {
+      const raw = localStorage.getItem("user");
+      if (!raw) {
+        navigate("/login");
+        return;
+      }
+  
+      const u = JSON.parse(raw);
+  
+      if (u.login === "admin") {
+        navigate("/admin");
+        return;
+      }
+  
+      navigate("/submit-article");
+    } catch (e) {
+      console.error("Не удалось прочитать user из localStorage:", e);
+      navigate("/login");
+    }
+  };
+
   return (
     <div className="page">
       {/* Шапка */}
-      <header className="header">
-        <div className="container header__inner">
-        <div className="logo" onClick={handleLogoClick}>
-          <img src="/logo1.svg" alt="SPACE logo" className="logo__image" />
-        </div>
+      {!hideMainHeader && (
+        <header className="header">
+          <div className="container header__inner">
+          <div className="logo" onClick={handleLogoClick}>
+            <img src="/logo1.svg" alt="SPACE logo" className="logo__image" />
+          </div>
 
-          <button className="profile-btn" onClick={handleProfileClick}>
-            <span className="profile-btn__icon">
-              <img src="/account.svg" alt="Профиль" className="logo__image" />
-            </span>
-            <span className="profile-btn__text">Профиль</span>
-          </button>
-        </div>
-      </header>
+            <button className="profile-btn" onClick={handleProfileClick}>
+              <span className="profile-btn__icon">
+                <img src="/account.svg" alt="Профиль" className="logo__image" />
+              </span>
+              <span className="profile-btn__text">Профиль</span>
+            </button>
+          </div>
+        </header>
+      )}
 
       <main className="main">
         <Routes>
@@ -593,7 +976,7 @@ function App() {
 
                   <div className="hero__overlay" />
                   <div className="container hero__content">
-                    <h1 className="hero__title">
+                    <h1 className="hero__title bicubik-title">
                       Найди идеальное место
                       <br />
                       для работы
@@ -649,45 +1032,56 @@ function App() {
 
                 {/* Карта с городами */}
                 <section className="map-section">
+              
                   <div className="container map-section__content">
-                    <h2 className="map-section__title">
+                    <h2 className="map-section__title bicubik-title">
                       Находи места по всей России
                     </h2>
                     <p className="map-section__subtitle">
                       Мы представлены во всех городах-миллионниках
                     </p>
 
-                    <div className="map-section__map-wrapper">
-                      <img
-                        src="/map-russia-new 1.png"
-                        alt="Карта России"
-                        className="map-section__map-img"
-                      />
-
-                      {orderedCities.map((city, index) => {
-                        const isVisible = index < visibleCount;
-                        return (
-                          <div
-                            key={city.id}
-                            className={
-                              "city-marker" + (isVisible ? " city-marker--visible" : "")
-                            }
-                            style={{
-                              top: city.top,
-                              left: city.left,
-                            }}
-                          >
-                            <img
-                              src="/pin-18.png"
-                              alt=""
-                              className="city-marker__pin"
-                            />
-                            <span className="city-marker__label">
-                              {city.name}
-                            </span>
+                    <div className="map-section__map-shell">
+                      <div className="map-section__map-area">
+                        {/* Верхняя бегущая строка */}
+                        <div className="map-marquee map-marquee--top" aria-hidden="true">
+                          <div className="map-marquee__track" ref={topMarqueeTrackRef}>
+                            <span className="map-marquee__text">{tickerText}</span>
+                            <span className="map-marquee__text">{tickerText}</span>
                           </div>
-                        );
-                      })}
+                        </div>
+
+                        {/* Карта + метки */}
+                        <div className="map-section__map-wrapper">
+                          <img
+                            src="/map-russia-new 1.png"
+                            alt="Карта России"
+                            className="map-section__map-img"
+                          />
+
+                          {orderedCities.map((city, index) => {
+                            const isVisible = index < visibleCount;
+                            return (
+                              <div
+                                key={city.id}
+                                className={"city-marker" + (isVisible ? " city-marker--visible" : "")}
+                                style={{ top: city.top, left: city.left }}
+                              >
+                                <img src="/pin-18.png" alt="" className="city-marker__pin" />
+                                <span className="city-marker__label">{city.name}</span>
+                              </div>
+                            );
+                          })}
+                        </div>
+
+                        {/* Нижняя бегущая строка */}
+                        <div className="map-marquee map-marquee--bottom" aria-hidden="true">
+                          <div className="map-marquee__track" ref={bottomMarqueeTrackRef}>
+                            <span className="map-marquee__text">{tickerText}</span>
+                            <span className="map-marquee__text">{tickerText}</span>
+                          </div>
+                        </div>
+                      </div>
                     </div>
                   </div>
                 </section>
@@ -818,7 +1212,14 @@ function App() {
                         <article
                           key={place.id}
                           className="place-card"
-                          onClick={() => navigate(`/place/${place.id}`)}
+                          onClick={() => {
+                            trackEvent("place_card_click", {
+                              placeId: place.id,
+                              placeName: place.name,
+                              city: place.city || "",
+                            });
+                            navigate(`/place/${place.id}`);
+                          }}
                         >
                           <div className="place-card__image-wrapper">
                           <img
@@ -935,11 +1336,127 @@ function App() {
                     </div>
                   </div>
                 </section>
+                {/* ====== ARTICLES ====== */}
+                <section className="articles">
+                  <div className="container">
+                    <h2 className="articles__title bicubik-title">Интересные статьи</h2>
+
+                    {/* Пустое состояние */}
+                    {!articlesLoading && !articlesError && (!articles || articles.length === 0) && (
+                      <div className="articles-empty">
+                        <p className="articles-empty__subtitle">
+                          Здесь пока ничего нет, но скоро появятся обучающие <br />
+                          или интересные статьи на тему фриланса и не только
+                        </p>
+
+                        <div className="articles-empty__art">
+                          {/* можно заменить на svg если сделаешь, пока так: */}
+                          <img
+                            src="/articles-empty.png"
+                            alt=""
+                            className="articles-empty__img"
+                            onError={(e) => (e.currentTarget.style.display = "none")}
+                          />
+                          {/* если нет картинки — просто пустой блок, но стили дадут размер */}
+                        </div>
+
+                        <button className="articles__add-btn" onClick={handleSubmitArticleClick}>
+                          Добавить
+                        </button>
+                      </div>
+                    )}
+
+                    {/* Ошибка / загрузка */}
+                    {articlesLoading && (
+                      <p className="articles__hint">Загружаем статьи...</p>
+                    )}
+                    {articlesError && (
+                      <p className="articles__hint articles__hint--error">{articlesError}</p>
+                    )}
+
+                    {/* Список статей */}
+                    {!articlesLoading && !articlesError && Array.isArray(articles) && articles.length > 0 && (
+                      <>
+                        <div className="articles-grid">
+                          {articles.slice(0, 6).map((a) => (
+                            <article
+                              key={a.id}
+                              className="article-card"
+                              onClick={() => {
+                                trackEvent("article_card_click", {
+                                  articleId: a.id,
+                                  articleTitle: a.title,
+                                });
+                                navigate(`/article/${a.id}`);
+                              }}
+                            >
+                              <div className="article-card__img-wrap">
+                                <img
+                                  src={resolveMediaUrl(a.coverImage || "/no-photo.png")}
+                                  alt={a.title || "Статья"}
+                                  className="article-card__img"
+                                  onError={(e) => (e.currentTarget.src = "/no-photo.png")}
+                                />
+                              </div>
+
+                              <div className="article-card__body">
+                              <div className="article-card__author-row">
+                                <div className="article-card__avatar">
+                                  <img
+                                    src={resolveMediaUrl(a.authorAvatar || "/account.svg")}
+                                    alt={a.authorName || a.authorLogin || "Автор"}
+                                    className="article-card__avatar-img"
+                                    onError={(e) => {
+                                      e.currentTarget.src = "/account.svg";
+                                    }}
+                                  />
+                                </div>
+                                <div className="article-card__author-meta">
+                                  <div className="article-card__author">
+                                    {a.authorName || a.authorLogin || "Автор"}
+                                  </div>
+                                  <div className="article-card__time">
+                                    {a.publishedAtHuman || formatArticleDate(a.publishedAt || a.createdAt)}
+                                  </div>
+                                </div>
+                              </div>
+
+                                <h3 className="article-card__title">
+                                  {a.title || "Без названия"}
+                                </h3>
+
+                                <p className="article-card__excerpt">
+                                  {a.excerpt || a.description || "…"}
+                                </p>
+                              </div>
+                            </article>
+                          ))}
+                        </div>
+
+                        <div className="articles-actions">
+                          <button
+                            className="articles__add-btn"
+                            onClick={() => navigate("/submit-article")}
+                          >
+                            Добавить
+                          </button>
+
+                          <button
+                            className="articles__more-btn"
+                            onClick={() => navigate("/articles")}
+                          >
+                            Показать еще
+                          </button>
+                        </div>
+                      </>
+                    )}
+                  </div>
+                </section>
 
                 {/* Яндекс-карта: маршрут */}
                 <section className="route-map">
                   <div className="route-map__inner">
-                    <h2 className="route-map__title">
+                    <h2 className="route-map__title bicubik-title">
                       Построй маршрут к рабочему месту мечты
                     </h2>
 
@@ -952,7 +1469,7 @@ function App() {
                 {/* CTA снизу */}
                 <section className="footer-cta">
                   <div className="footer-cta__inner">
-                    <h2 className="footer-cta__title">
+                    <h2 className="footer-cta__title bicubik-title">
                       Знаешь отличное место?
                     </h2>
                     <p className="footer-cta__subtitle">
@@ -981,9 +1498,54 @@ function App() {
             element={<ProfilePage onLogout={() => setIsLoggedIn(false)} />}
           />
           <Route path="/admin" element={<AdminPage />} />
-	  <Route path="/submit-place" element={<SubmitPlacePage />} />
+	        <Route path="/submit-place" element={<SubmitPlacePage />} />
+          <Route path="/submit-article" element={<SubmitArticlePage />} />
+          <Route path="/article/:id" element={<ArticlePage />} />
         </Routes>
       </main>
+
+      {showTelegramPopup && (
+        <div className="tg-popup-overlay" onClick={handleTelegramPopupClose}>
+          <div className="tg-popup" onClick={(e) => e.stopPropagation()}>
+            <button
+              type="button"
+              className="tg-popup__close"
+              onClick={handleTelegramPopupClose}
+              aria-label="Закрыть"
+            >
+              ×
+            </button>
+
+            <img
+              src="/tg-icon.svg"
+              alt="Telegram"
+              className="tg-popup__icon"
+            />
+
+            <h3 className="tg-popup__title">
+              Подпишитесь на наш
+              <br />
+              телеграм-канал
+            </h3>
+
+            <p className="tg-popup__text">
+              Там новости из мира айти и удалёнки, мемы,
+              <br />
+              обзоры мест, полезности.
+              <br />
+              В общем, оно того стоит
+            </p>
+
+            <button
+              type="button"
+              className="tg-popup__btn"
+              onClick={handleTelegramSubscribeClick}
+            >
+              Подписаться
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* Нижний футер */}
       <footer className="footer">

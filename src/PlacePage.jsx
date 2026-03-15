@@ -2,7 +2,9 @@
 import { useEffect, useState } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 
-const API_BASE = import.meta.env.VITE_API_BASE || (import.meta.env.PROD ? "/api" : "http://localhost:3001");
+const API_BASE =
+  import.meta.env.VITE_API_BASE ||
+  (import.meta.env.PROD ? "" : "http://localhost:3001");
 const FAVORITES_PREFIX = "favoritePlaces_";
 const REVIEW_IMAGES_LIMIT = 6;
 // Доп. описание и особенности для мест
