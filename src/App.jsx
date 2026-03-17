@@ -104,25 +104,27 @@ function getCover(place) {
 }
 
 const CITIES = [
-  { id: "moscow", name: "Москва", top: "47%", left: "14%" },
-  { id: "spb", name: "Санкт-Петербург", top: "33%", left: "15%" },
-  { id: "rostov", name: "Ростов-на-Дону", top: "65%", left: "8%" },
-  { id: "omsk", name: "Омск", top: "74%", left: "36%" },
-  { id: "nn", name: "Нижний Новгород", top: "53%", left: "18%" },
-  { id: "kazan", name: "Казань", top: "61%", left: "20%" },
-  { id: "samara", name: "Самара", top: "67%", left: "18%" },
-  { id: "volgograd", name: "Волгоград", top: "67%", left: "13%" },
-  { id: "voronezh", name: "Воронеж", top: "58%", left: "10%" },
-  { id: "ufa", name: "Уфа", top: "73%", left: "32%" },
-  { id: "perm", name: "Пермь", top: "60%", left: "27%" },
-  { id: "ekb", name: "Екатеринбург", top: "65%", left: "30%" },
-  { id: "chelyabinsk", name: "Челябинск", top: "71%", left: "29%" },
-  { id: "novosibirsk", name: "Новосибирск", top: "82%", left: "42%" },
-  { id: "krasnoyarsk", name: "Красноярск", top: "80%", left: "50%" },
-  { id: "vladivostok", name: "Владивосток", top: "85%", left: "88%" },
+  { id: "spb", name: "Санкт-Петербург", top: "38%", left: "15.0%" },
+  { id: "moscow", name: "Москва", top: "48.0%", left: "14.2%" },
+  { id: "nn", name: "Нижний Новгород", top: "53.5%", left: "18.7%" },
+  { id: "voronezh", name: "Воронеж", top: "58.7%", left: "10.3%" },
+  { id: "rostov", name: "Ростов-на-Дону", top: "66.3%", left: "8.3%" },
+  { id: "volgograd", name: "Волгоград", top: "63.2%", left: "12.0%" },
+  { id: "kazan", name: "Казань", top: "60.2%", left: "21.0%" },
+  { id: "samara", name: "Самара", top: "64.0%", left: "18.8%" },
+  { id: "perm", name: "Пермь", top: "58.8%", left: "26.0%" },
+  { id: "ufa", name: "Уфа", top: "66.4%", left: "23.2%" },
+  { id: "ekb", name: "Екатеринбург", top: "63.2%", left: "28.4%" },
+  { id: "chelyabinsk", name: "Челябинск", top: "68.3%", left: "29.0%" },
+  { id: "omsk", name: "Омск", top: "71.0%", left: "36.0%" },
+  { id: "novosibirsk", name: "Новосибирск", top: "75.2%", left: "40.2%" },
+  { id: "krasnoyarsk", name: "Красноярск", top: "83.8%", left: "50.2%" },
+  { id: "vladivostok", name: "Владивосток", top: "86.8%", left: "86.8%" },
 ];
 
 const PAGE_SIZE = 9;
+const HOME_ARTICLES_LIMIT = 6;
+const SHOW_MORE_ARTICLES_THRESHOLD = 9;
 
 function shuffle(array) {
   const arr = [...array];
@@ -133,10 +135,134 @@ function shuffle(array) {
   return arr;
 }
 
+function ArticlesListPage({ articles, articlesLoading, articlesError, navigate }) {
+  return (
+    <section className="articles articles-page">
+      <div className="container">
+        <h2 className="articles__title bicubik-title">Все статьи</h2>
+
+        {articlesLoading && (
+          <p className="articles__hint">Загружаем статьи...</p>
+        )}
+
+        {articlesError && (
+          <p className="articles__hint articles__hint--error">{articlesError}</p>
+        )}
+
+        {!articlesLoading && !articlesError && Array.isArray(articles) && articles.length === 0 && (
+          <p className="articles__hint">Статей пока нет</p>
+        )}
+
+        {!articlesLoading && !articlesError && Array.isArray(articles) && articles.length > 0 && (
+          <div className="articles-grid">
+            {articles.map((a) => (
+              <article
+                key={a.id}
+                className="article-card"
+                onClick={() => navigate(`/article/${a.id}`)}
+              >
+                <div className="article-card__img-wrap">
+                  <img
+                    src={resolveMediaUrl(a.coverImage || "/no-photo.png")}
+                    alt={a.title || "Статья"}
+                    className="article-card__img"
+                    onError={(e) => (e.currentTarget.src = "/no-photo.png")}
+                  />
+                </div>
+
+                <div className="article-card__body">
+                  <div className="article-card__author-row">
+                    <div className="article-card__avatar">
+                      <img
+                        src={resolveMediaUrl(a.authorAvatar || "/account.svg")}
+                        alt={a.authorName || a.authorLogin || "Автор"}
+                        className="article-card__avatar-img"
+                        onError={(e) => {
+                          e.currentTarget.src = "/account.svg";
+                        }}
+                      />
+                    </div>
+                    <div className="article-card__author-meta">
+                      <div className="article-card__author">
+                        {a.authorName || a.authorLogin || "Автор"}
+                      </div>
+                      <div className="article-card__time">
+                        {a.publishedAtHuman || formatArticleDate(a.publishedAt || a.createdAt)}
+                      </div>
+                    </div>
+                  </div>
+
+                  <h3 className="article-card__title">
+                    {a.title || "Без названия"}
+                  </h3>
+
+                  <p className="article-card__excerpt">
+                    {a.excerpt || a.description || "…"}
+                  </p>
+                </div>
+              </article>
+            ))}
+          </div>
+        )}
+      </div>
+    </section>
+  );
+}
+
 function App() {
   const navigate = useNavigate();
-
   const location = useLocation();
+
+  const sendSessionEnd = () => {
+    try {
+      const startedAt = Number(sessionStorage.getItem("analytics_session_started_at") || Date.now());
+      const durationSec = Math.max(0, Math.round((Date.now() - startedAt) / 1000));
+  
+      const VISITOR_KEY = "analytics_visitor_id";
+      const SESSION_KEY = "analytics_session_id";
+  
+      let visitorId = localStorage.getItem(VISITOR_KEY);
+      if (!visitorId) {
+        visitorId =
+          "v_" + Date.now().toString(36) + "_" + Math.random().toString(36).slice(2, 10);
+        localStorage.setItem(VISITOR_KEY, visitorId);
+      }
+  
+      let sessionId = sessionStorage.getItem(SESSION_KEY);
+      if (!sessionId) {
+        sessionId =
+          "s_" + Date.now().toString(36) + "_" + Math.random().toString(36).slice(2, 10);
+        sessionStorage.setItem(SESSION_KEY, sessionId);
+      }
+  
+      const body = JSON.stringify({
+        event: "session_end",
+        payload: {
+          durationSec,
+        },
+        path: window.location.pathname,
+        referrer: document.referrer || "",
+        userAgent: navigator.userAgent,
+        visitorId,
+        sessionId,
+        ts: Date.now(),
+      });
+  
+      if (navigator.sendBeacon) {
+        const blob = new Blob([body], { type: "application/json" });
+        navigator.sendBeacon(`${API_BASE}/api/analytics/event`, blob);
+      } else {
+        fetch(`${API_BASE}/api/analytics/event`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body,
+          keepalive: true,
+        }).catch(() => {});
+      }
+    } catch (e) {
+      console.error("sendSessionEnd error:", e);
+    }
+  };
 
   const hideMainHeader = useMemo(() => {
     const p = location.pathname;
@@ -196,57 +322,6 @@ function App() {
     });
   
     const startedAt = sessionStartedAtRef.current;
-  
-    const sendSessionEnd = () => {
-      try {
-        const startedAt = Number(sessionStorage.getItem("analytics_session_started_at") || Date.now());
-        const durationSec = Math.max(0, Math.round((Date.now() - startedAt) / 1000));
-    
-        const VISITOR_KEY = "analytics_visitor_id";
-        const SESSION_KEY = "analytics_session_id";
-    
-        let visitorId = localStorage.getItem(VISITOR_KEY);
-        if (!visitorId) {
-          visitorId =
-            "v_" + Date.now().toString(36) + "_" + Math.random().toString(36).slice(2, 10);
-          localStorage.setItem(VISITOR_KEY, visitorId);
-        }
-    
-        let sessionId = sessionStorage.getItem(SESSION_KEY);
-        if (!sessionId) {
-          sessionId =
-            "s_" + Date.now().toString(36) + "_" + Math.random().toString(36).slice(2, 10);
-          sessionStorage.setItem(SESSION_KEY, sessionId);
-        }
-    
-        const body = JSON.stringify({
-          event: "session_end",
-          payload: {
-            durationSec,
-          },
-          path: window.location.pathname,
-          referrer: document.referrer || "",
-          userAgent: navigator.userAgent,
-          visitorId,
-          sessionId,
-          ts: Date.now(),
-        });
-    
-        if (navigator.sendBeacon) {
-          const blob = new Blob([body], { type: "application/json" });
-          navigator.sendBeacon(`${API_BASE}/api/analytics/event`, blob);
-        } else {
-          fetch(`${API_BASE}/api/analytics/event`, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body,
-            keepalive: true,
-          }).catch(() => {});
-        }
-      } catch (e) {
-        console.error("sendSessionEnd error:", e);
-      }
-    };
   
     window.addEventListener("beforeunload", sendSessionEnd);
     return () => {
@@ -816,6 +891,9 @@ useEffect(() => {
       fetchArticles();
     }, []);
 
+  const shouldShowMoreArticlesButton =
+  Array.isArray(articles) && articles.length >= SHOW_MORE_ARTICLES_THRESHOLD;
+
   // --- анимация городов ---
   useEffect(() => {
     const fixed = CITIES.slice(0, 4);
@@ -1054,7 +1132,7 @@ useEffect(() => {
                         {/* Карта + метки */}
                         <div className="map-section__map-wrapper">
                           <img
-                            src="/map-russia-new 1.png"
+                            src="/map-rf.svg"
                             alt="Карта России"
                             className="map-section__map-img"
                           />
@@ -1378,7 +1456,7 @@ useEffect(() => {
                     {!articlesLoading && !articlesError && Array.isArray(articles) && articles.length > 0 && (
                       <>
                         <div className="articles-grid">
-                          {articles.slice(0, 6).map((a) => (
+                          {articles.slice(0, HOME_ARTICLES_LIMIT).map((a) => (
                             <article
                               key={a.id}
                               className="article-card"
@@ -1432,7 +1510,6 @@ useEffect(() => {
                             </article>
                           ))}
                         </div>
-
                         <div className="articles-actions">
                           <button
                             className="articles__add-btn"
@@ -1441,12 +1518,14 @@ useEffect(() => {
                             Добавить
                           </button>
 
-                          <button
-                            className="articles__more-btn"
-                            onClick={() => navigate("/articles")}
-                          >
-                            Показать еще
-                          </button>
+                          {shouldShowMoreArticlesButton && (
+                            <button
+                              className="articles__more-btn"
+                              onClick={() => navigate("/articles")}
+                            >
+                              Показать еще
+                            </button>
+                          )}
                         </div>
                       </>
                     )}
@@ -1501,6 +1580,17 @@ useEffect(() => {
 	        <Route path="/submit-place" element={<SubmitPlacePage />} />
           <Route path="/submit-article" element={<SubmitArticlePage />} />
           <Route path="/article/:id" element={<ArticlePage />} />
+          <Route
+            path="/articles"
+            element={
+              <ArticlesListPage
+                articles={articles}
+                articlesLoading={articlesLoading}
+                articlesError={articlesError}
+                navigate={navigate}
+              />
+            }
+          />
         </Routes>
       </main>
 
