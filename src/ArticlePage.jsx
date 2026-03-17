@@ -2,6 +2,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import "./App.css";
+import SEO, { SEO_SITE_URL } from "./SEO.jsx";
 
 const API_BASE =
   import.meta.env.VITE_API_BASE ||
@@ -233,8 +234,65 @@ export default function ArticlePage() {
   const authorLine = article.authorLogin ? `@${article.authorLogin}` : "Автор";
   const publishedLine = formatDateFromUnix(article.publishedAt || article.createdAt);
 
+  const articleTitle = article?.title
+  ? `${article.title} — ALLSPACE`
+  : "Статья — ALLSPACE";
+
+  const articleDescription =
+    article?.excerpt ||
+    article?.description ||
+    "Статья ALLSPACE о фрилансе, удалённой работе и продуктивности.";
+
+  const articleImage = article?.coverImage
+    ? (article.coverImage.startsWith("http")
+        ? article.coverImage
+        : `${SEO_SITE_URL}${article.coverImage}`)
+    : `${SEO_SITE_URL}/og-default.jpg`;
+
+  const articleUrl = `${SEO_SITE_URL}/article/${article?.id || ""}`;
+
   return (
     <>
+      <SEO
+        title={articleTitle}
+        description={articleDescription}
+        canonical={articleUrl}
+        ogTitle={articleTitle}
+        ogDescription={articleDescription}
+        ogImage={articleImage}
+        ogUrl={articleUrl}
+        type="article"
+        jsonLd={{
+          "@context": "https://schema.org",
+          "@type": "Article",
+          headline: article?.title || "Статья",
+          description: articleDescription,
+          image: [articleImage],
+          author: {
+            "@type": "Person",
+            name: article?.authorName || article?.authorLogin || "Автор",
+          },
+          publisher: {
+            "@type": "Organization",
+            name: "ALLSPACE",
+            logo: {
+              "@type": "ImageObject",
+              url: `${SEO_SITE_URL}/logo3.svg`,
+            },
+          },
+          datePublished: article?.publishedAt
+            ? new Date(Number(article.publishedAt) * 1000).toISOString()
+            : article?.createdAt
+            ? new Date(article.createdAt).toISOString()
+            : undefined,
+          dateModified: article?.updatedAt
+            ? new Date(article.updatedAt).toISOString()
+            : article?.createdAt
+            ? new Date(article.createdAt).toISOString()
+            : undefined,
+          mainEntityOfPage: articleUrl,
+        }}
+      />
       <section className="article-page">
         <div className="container article-page__inner">
           {/* top bar like telegra */}

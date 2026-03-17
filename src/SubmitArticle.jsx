@@ -3,6 +3,14 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import { normalizeBlocks, buildExcerpt } from "./telegraphEditor";
 import "./App.css";
+import SEO, { SEO_SITE_URL } from "./SEO.jsx";
+
+<SEO
+  title="Добавить статью — ALLSPACE"
+  description="Добавление новой статьи."
+  url={`${SEO_SITE_URL}/submit-article`}
+  noindex={true}
+/>
 
 const API_BASE =
   import.meta.env.VITE_API_BASE || (import.meta.env.PROD ? "" : "http://localhost:3001");

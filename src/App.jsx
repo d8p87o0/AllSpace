@@ -12,7 +12,7 @@ import SubmitPlacePage from "./SubmitPlace.jsx";
 import SubmitArticlePage from "./SubmitArticle.jsx";
 import ArticlePage from "./ArticlePage.jsx";
 import { useLocation } from "react-router-dom";
-
+import SEO, { SEO_SITE_URL } from "./SEO.jsx";
 
 const API_BASE =
   import.meta.env.VITE_API_BASE ||
@@ -137,75 +137,98 @@ function shuffle(array) {
 
 function ArticlesListPage({ articles, articlesLoading, articlesError, navigate }) {
   return (
-    <section className="articles articles-page">
-      <div className="container">
-        <h2 className="articles__title bicubik-title">Все статьи</h2>
+    <>
+      <SEO
+        title="Все статьи — ALLSPACE"
+        description="Подборка статей ALLSPACE о фрилансе, удалённой работе, продуктивности и поиске комфортных мест для работы."
+        url={`${SEO_SITE_URL}/articles`}
+        image={`${SEO_SITE_URL}/og-default.jpg`}
+        type="website"
+        jsonLd={{
+          "@context": "https://schema.org",
+          "@type": "CollectionPage",
+          name: "Все статьи — ALLSPACE",
+          url: `${SEO_SITE_URL}/articles`,
+          description:
+            "Подборка статей ALLSPACE о фрилансе, удалённой работе, продуктивности и поиске комфортных мест для работы.",
+        }}
+      />
 
-        {articlesLoading && (
-          <p className="articles__hint">Загружаем статьи...</p>
-        )}
+      <section className="articles articles-page">
+        <div className="container">
+          <h2 className="articles__title bicubik-title">Все статьи</h2>
 
-        {articlesError && (
-          <p className="articles__hint articles__hint--error">{articlesError}</p>
-        )}
+          {articlesLoading && (
+            <p className="articles__hint">Загружаем статьи...</p>
+          )}
 
-        {!articlesLoading && !articlesError && Array.isArray(articles) && articles.length === 0 && (
-          <p className="articles__hint">Статей пока нет</p>
-        )}
+          {articlesError && (
+            <p className="articles__hint articles__hint--error">{articlesError}</p>
+          )}
 
-        {!articlesLoading && !articlesError && Array.isArray(articles) && articles.length > 0 && (
-          <div className="articles-grid">
-            {articles.map((a) => (
-              <article
-                key={a.id}
-                className="article-card"
-                onClick={() => navigate(`/article/${a.id}`)}
-              >
-                <div className="article-card__img-wrap">
-                  <img
-                    src={resolveMediaUrl(a.coverImage || "/no-photo.png")}
-                    alt={a.title || "Статья"}
-                    className="article-card__img"
-                    onError={(e) => (e.currentTarget.src = "/no-photo.png")}
-                  />
-                </div>
+          {!articlesLoading &&
+            !articlesError &&
+            Array.isArray(articles) &&
+            articles.length === 0 && <p className="articles__hint">Статей пока нет</p>}
 
-                <div className="article-card__body">
-                  <div className="article-card__author-row">
-                    <div className="article-card__avatar">
+          {!articlesLoading &&
+            !articlesError &&
+            Array.isArray(articles) &&
+            articles.length > 0 && (
+              <div className="articles-grid">
+                {articles.map((a) => (
+                  <article
+                    key={a.id}
+                    className="article-card"
+                    onClick={() => navigate(`/article/${a.id}`)}
+                  >
+                    <div className="article-card__img-wrap">
                       <img
-                        src={resolveMediaUrl(a.authorAvatar || "/account.svg")}
-                        alt={a.authorName || a.authorLogin || "Автор"}
-                        className="article-card__avatar-img"
-                        onError={(e) => {
-                          e.currentTarget.src = "/account.svg";
-                        }}
+                        src={resolveMediaUrl(a.coverImage || "/no-photo.png")}
+                        alt={a.title || "Статья"}
+                        className="article-card__img"
+                        onError={(e) => (e.currentTarget.src = "/no-photo.png")}
                       />
                     </div>
-                    <div className="article-card__author-meta">
-                      <div className="article-card__author">
-                        {a.authorName || a.authorLogin || "Автор"}
+
+                    <div className="article-card__body">
+                      <div className="article-card__author-row">
+                        <div className="article-card__avatar">
+                          <img
+                            src={resolveMediaUrl(a.authorAvatar || "/account.svg")}
+                            alt={a.authorName || a.authorLogin || "Автор"}
+                            className="article-card__avatar-img"
+                            onError={(e) => {
+                              e.currentTarget.src = "/account.svg";
+                            }}
+                          />
+                        </div>
+                        <div className="article-card__author-meta">
+                          <div className="article-card__author">
+                            {a.authorName || a.authorLogin || "Автор"}
+                          </div>
+                          <div className="article-card__time">
+                            {a.publishedAtHuman ||
+                              formatArticleDate(a.publishedAt || a.createdAt)}
+                          </div>
+                        </div>
                       </div>
-                      <div className="article-card__time">
-                        {a.publishedAtHuman || formatArticleDate(a.publishedAt || a.createdAt)}
-                      </div>
+
+                      <h3 className="article-card__title">
+                        {a.title || "Без названия"}
+                      </h3>
+
+                      <p className="article-card__excerpt">
+                        {a.excerpt || a.description || "…"}
+                      </p>
                     </div>
-                  </div>
-
-                  <h3 className="article-card__title">
-                    {a.title || "Без названия"}
-                  </h3>
-
-                  <p className="article-card__excerpt">
-                    {a.excerpt || a.description || "…"}
-                  </p>
-                </div>
-              </article>
-            ))}
-          </div>
-        )}
-      </div>
-    </section>
+                  </article>
+                ))}
+              </div>
+            )}
+        </div>
+      </section>
+    </>
   );
 }
 
@@ -1038,6 +1061,24 @@ useEffect(() => {
             path="/"
             element={
               <>
+                <SEO
+                  title="ALLSPACE — места для работы: кафе, коворкинги и библиотеки"
+                  description="Найди идеальное место для работы: проверенные кафе, коворкинги и библиотеки с Wi-Fi, розетками, рейтингами и отзывами."
+                  url={`${SEO_SITE_URL}/`}
+                  image={`${SEO_SITE_URL}/og-default.jpg`}
+                  type="website"
+                  jsonLd={{
+                    "@context": "https://schema.org",
+                    "@type": "WebSite",
+                    name: "ALLSPACE",
+                    url: `${SEO_SITE_URL}/`,
+                    potentialAction: {
+                      "@type": "SearchAction",
+                      target: `${SEO_SITE_URL}/?q={search_term_string}`,
+                      "query-input": "required name=search_term_string",
+                    },
+                  }}
+                />
                 {/* Hero */}
                 <section className="hero">
                   <video

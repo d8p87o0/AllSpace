@@ -2,6 +2,14 @@
 import { useNavigate } from "react-router-dom";
 import placesData from "./places.json";
 import "./App.css";
+import SEO, { SEO_SITE_URL } from "./SEO.jsx";
+
+<SEO
+  title="Профиль — ALLSPACE"
+  description="Профиль пользователя ALLSPACE."
+  url={`${SEO_SITE_URL}/profile`}
+  noindex={true}
+/>
 
 const API_BASE =
   import.meta.env.VITE_API_BASE ||

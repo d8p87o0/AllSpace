@@ -1,6 +1,7 @@
 ﻿// src/PlacePage.jsx
 import { useEffect, useState } from "react";
 import { useParams, useNavigate } from "react-router-dom";
+import SEO, { SEO_SITE_URL } from "./SEO.jsx";
 
 const API_BASE =
   import.meta.env.VITE_API_BASE ||
@@ -126,33 +127,6 @@ function buildGalleryImages(src) {
   return images;
 }
 
-function resolveMediaUrl(url) {
-  if (!url) return url;
-
-  // абсолютные ссылки не трогаем
-  if (/^https?:\/\//i.test(url)) return url;
-
-  // если это локальная статика сервера: /photos/...
-  if (url.startsWith("/photos/")) return `${API_BASE}${url}`;
-
-  // любые другие относительные пути оставляем как есть (например /p1p1.png из public)
-  return url;
-}
-
-function normalizePhoneForLink(phone) {
-  if (!phone) return null;
-  const cleaned = String(phone).replace(/[^\d+]/g, "");
-  return cleaned || null;
-}
-
-function hoursToLines(hours) {
-  if (!hours) return [];
-  return String(hours)
-    .replace(/\r/g, "\n")
-    .split("\n")
-    .map((l) => l.trim())
-    .filter(Boolean);
-}
 
 export default function PlacePage() {
   const { id } = useParams();
@@ -1014,9 +988,67 @@ export default function PlacePage() {
   const isFirstImage = activeIndex === 0;
   const isLastImage =
     !galleryImages.length || activeIndex === galleryImages.length - 1;
+  const placeTitle = place?.name
+  ? `${place.name} — ALLSPACE`
+  : "Место для работы — ALLSPACE";
+
+  const placeDescription =
+    details?.description ||
+    `Подборка информации о месте ${place?.name || ""}: адрес, фото, отзывы, удобства и маршрут.`;
+
+  const rawPlaceImage =
+    galleryImages?.[0] || place?.image || "/og-default.jpg";
+
+  const placeImage = rawPlaceImage
+    ? (rawPlaceImage.startsWith("http")
+        ? rawPlaceImage
+        : rawPlaceImage.startsWith("/photos/")
+        ? `${API_BASE}${rawPlaceImage}`
+        : `${SEO_SITE_URL}${rawPlaceImage}`)
+    : `${SEO_SITE_URL}/og-default.jpg`;
+
+  const placeUrl = `${SEO_SITE_URL}/place/${place?.id || placeId}`;
+
+  const aggregateRatingValue =
+    typeof ratingSource === "number" && !Number.isNaN(ratingSource)
+      ? Number(ratingSource.toFixed(1))
+      : undefined;
 
   return (
     <>
+      <SEO
+        title={placeTitle}
+        description={placeDescription}
+        canonical={placeUrl}
+        ogTitle={placeTitle}
+        ogDescription={placeDescription}
+        ogImage={placeImage}
+        ogUrl={placeUrl}
+        type="place"
+        jsonLd={{
+          "@context": "https://schema.org",
+          "@type": "Place",
+          name: place?.name || "Место",
+          description: placeDescription,
+          image: [placeImage],
+          address: {
+            "@type": "PostalAddress",
+            addressLocality: place?.city || "",
+            streetAddress: place?.address || "",
+            addressCountry: "RU",
+          },
+          url: placeUrl,
+          ...(aggregateRatingValue
+            ? {
+                aggregateRating: {
+                  "@type": "AggregateRating",
+                  ratingValue: aggregateRatingValue,
+                  reviewCount: reviewsCount || 0,
+                },
+              }
+            : {}),
+        }}
+      />
       <section className="place-page">
         <div className="container place-page__inner">
           <div className="place-page__layout">

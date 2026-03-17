@@ -2,6 +2,14 @@
 import { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import "./App.css";
+import SEO, { SEO_SITE_URL } from "./SEO.jsx";
+
+<SEO
+  title="Регистрация — ALLSPACE"
+  description="Регистрация аккаунта ALLSPACE."
+  url={`${SEO_SITE_URL}/register`}
+  noindex={true}
+/>
 
 const API_BASE =
   import.meta.env.VITE_API_BASE ||
