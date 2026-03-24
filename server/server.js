@@ -310,6 +310,7 @@ db.serialize(() => {
       type TEXT,
       city TEXT,
       address TEXT,
+      display_order INTEGER DEFAULT 0,
       image TEXT,
       images TEXT, -- JSON-массив ссылок на картинки
       badge TEXT,
@@ -444,9 +445,20 @@ db.serialize(() => {
   `);
 
   db.run(`CREATE INDEX IF NOT EXISTS idx_articles_status ON articles(status)`);
-  db.run(`CREATE INDEX IF NOT EXISTS idx_articles_order ON articles(display_order)`);
   db.run(`CREATE INDEX IF NOT EXISTS idx_article_comments_article ON article_comments(article_id)`);
   db.run(`CREATE INDEX IF NOT EXISTS idx_article_fav_article ON article_favorites(article_id)`);
+
+  const ensurePlacesOrderIndex = () => {
+    db.run("CREATE INDEX IF NOT EXISTS idx_places_order ON places(display_order)", (e) => {
+      if (e) console.error("Ошибка создания idx_places_order:", e);
+    });
+  };
+
+  const ensureArticlesOrderIndex = () => {
+    db.run("CREATE INDEX IF NOT EXISTS idx_articles_order ON articles(display_order)", (e) => {
+      if (e) console.error("Ошибка создания idx_articles_order:", e);
+    });
+  };
 
   // --- 3) МИГРАЦИИ PLACES: добавляем недостающие колонки ---
   db.all("PRAGMA table_info(places)", (err, columns) => {
@@ -497,6 +509,35 @@ db.serialize(() => {
         if (e) console.error("Ошибка добавления submitted_at в places:", e);
         else console.log("Столбец submitted_at добавлен в таблицу places");
       });
+    }
+
+    if (!colNames.has("display_order")) {
+      db.run("ALTER TABLE places ADD COLUMN display_order INTEGER DEFAULT 0", (e) => {
+        if (e) console.error("Ошибка добавления display_order в places:", e);
+        else console.log("Столбец display_order добавлен в таблицу places");
+        ensurePlacesOrderIndex();
+      });
+    } else {
+      ensurePlacesOrderIndex();
+    }
+  });
+
+  db.all("PRAGMA table_info(articles)", (err, columns) => {
+    if (err) {
+      console.error("Ошибка PRAGMA table_info(articles):", err);
+      return;
+    }
+
+    const colNames = new Set((columns || []).map((c) => c.name));
+
+    if (!colNames.has("display_order")) {
+      db.run("ALTER TABLE articles ADD COLUMN display_order INTEGER DEFAULT 0", (e) => {
+        if (e) console.error("Ошибка добавления display_order в articles:", e);
+        else console.log("Столбец display_order добавлен в таблицу articles");
+        ensureArticlesOrderIndex();
+      });
+    } else {
+      ensureArticlesOrderIndex();
     }
   });
 
@@ -595,13 +636,13 @@ db.serialize(() => {
 
         const insertSql = `
           INSERT INTO places
-            (name, type, city, address, image, images, badge, rating, reviews, features, link, hours, phone)
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            (name, type, city, address, display_order, image, images, badge, rating, reviews, features, link, hours, phone)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         `;
 
         const stmt = db.prepare(insertSql);
 
-        for (const p of placesFromJson) {
+        placesFromJson.forEach((p, index) => {
           const featuresJson = JSON.stringify(p.features || []);
           const imagesJson = JSON.stringify(p.images || []);
 
@@ -610,6 +651,7 @@ db.serialize(() => {
             p.type || null,
             p.city || null,
             p.address || null,
+            index + 1,
             p.image || null,
             imagesJson,
             p.badge || null,
@@ -620,7 +662,7 @@ db.serialize(() => {
             p.hours || null,
             p.phone || null
           );
-        }
+        });
 
         stmt.finalize();
         console.log("Импорт places.json в БД завершён.");
@@ -653,6 +695,7 @@ function mapPlaceRow(row) {
     type: row.type,
     city: row.city,
     address: row.address,
+    displayOrder: Number(row.display_order || 0),
     image: row.image,
     images,
     badge: row.badge,
@@ -764,6 +807,198 @@ function resolveRequestUser(req, cb) {
       isAdmin: login === "admin",
     });
   });
+}
+
+function resolveRequestUserAsync(req) {
+  return new Promise((resolve, reject) => {
+    resolveRequestUser(req, (err, requester) => {
+      if (err) {
+        reject(err);
+        return;
+      }
+      resolve(requester);
+    });
+  });
+}
+
+function dbRunAsync(sql, params = []) {
+  return new Promise((resolve, reject) => {
+    db.run(sql, params, function (err) {
+      if (err) {
+        reject(err);
+        return;
+      }
+
+      resolve({
+        lastID: this.lastID,
+        changes: this.changes,
+      });
+    });
+  });
+}
+
+function dbGetAsync(sql, params = []) {
+  return new Promise((resolve, reject) => {
+    db.get(sql, params, (err, row) => {
+      if (err) {
+        reject(err);
+        return;
+      }
+      resolve(row || null);
+    });
+  });
+}
+
+function dbAllAsync(sql, params = []) {
+  return new Promise((resolve, reject) => {
+    db.all(sql, params, (err, rows) => {
+      if (err) {
+        reject(err);
+        return;
+      }
+      resolve(rows || []);
+    });
+  });
+}
+
+async function withTransaction(task) {
+  await dbRunAsync("BEGIN IMMEDIATE TRANSACTION");
+
+  try {
+    const result = await task();
+    await dbRunAsync("COMMIT");
+    return result;
+  } catch (err) {
+    try {
+      await dbRunAsync("ROLLBACK");
+    } catch {}
+    throw err;
+  }
+}
+
+let orderLockChain = Promise.resolve();
+
+function withOrderLock(task) {
+  const run = orderLockChain.catch(() => {}).then(task);
+  orderLockChain = run.catch(() => {});
+  return run;
+}
+
+function getOrderTable(table) {
+  if (table === "places" || table === "articles") {
+    return table;
+  }
+  throw new Error(`Unknown order table: ${table}`);
+}
+
+function parseDisplayOrder(value) {
+  const num = Number(value);
+  return Number.isInteger(num) && num > 0 ? num : null;
+}
+
+function clampDisplayOrder(value, maxOrder) {
+  if (!maxOrder || maxOrder < 1) return 1;
+  if (!value) return maxOrder;
+  return Math.max(1, Math.min(value, maxOrder));
+}
+
+async function ensureSequentialDisplayOrders(table) {
+  const safeTable = getOrderTable(table);
+  const orderBySql =
+    safeTable === "articles"
+      ? `
+        ORDER BY
+          CASE WHEN COALESCE(display_order, 0) > 0 THEN 0 ELSE 1 END,
+          COALESCE(NULLIF(display_order, 0), 0) DESC,
+          published_at DESC,
+          created_at DESC,
+          id DESC
+      `
+      : `
+        ORDER BY
+          CASE WHEN COALESCE(display_order, 0) > 0 THEN 0 ELSE 1 END,
+          COALESCE(NULLIF(display_order, 0), 2147483647) ASC,
+          id ASC
+      `;
+
+  const rows = await dbAllAsync(
+    `SELECT id, COALESCE(display_order, 0) AS display_order FROM ${safeTable} ${orderBySql}`
+  );
+
+  const isSequential = rows.every((row, index) => Number(row.display_order || 0) === index + 1);
+  if (isSequential) {
+    return;
+  }
+
+  await withTransaction(async () => {
+    for (let index = 0; index < rows.length; index += 1) {
+      await dbRunAsync(`UPDATE ${safeTable} SET display_order = ? WHERE id = ?`, [index + 1, rows[index].id]);
+    }
+  });
+}
+
+async function allocateDisplayOrderOnInsert(table, requestedOrder) {
+  const safeTable = getOrderTable(table);
+  const row = await dbGetAsync(`SELECT COUNT(*) AS cnt FROM ${safeTable}`);
+  const maxOrder = Number(row?.cnt || 0) + 1;
+  const targetOrder = clampDisplayOrder(requestedOrder, maxOrder);
+
+  await dbRunAsync(
+    `UPDATE ${safeTable} SET display_order = display_order + 1 WHERE COALESCE(display_order, 0) >= ?`,
+    [targetOrder]
+  );
+
+  return targetOrder;
+}
+
+async function moveDisplayOrder(table, id, currentOrder, requestedOrder) {
+  const safeTable = getOrderTable(table);
+  const row = await dbGetAsync(`SELECT COUNT(*) AS cnt FROM ${safeTable} WHERE id != ?`, [id]);
+  const maxOrder = Number(row?.cnt || 0) + 1;
+  const normalizedCurrent = parseDisplayOrder(currentOrder);
+  const targetOrder = clampDisplayOrder(requestedOrder || normalizedCurrent, maxOrder);
+
+  if (!normalizedCurrent) {
+    await dbRunAsync(
+      `UPDATE ${safeTable}
+       SET display_order = display_order + 1
+       WHERE id != ? AND COALESCE(display_order, 0) >= ?`,
+      [id, targetOrder]
+    );
+    return targetOrder;
+  }
+
+  if (targetOrder < normalizedCurrent) {
+    await dbRunAsync(
+      `UPDATE ${safeTable}
+       SET display_order = display_order + 1
+       WHERE id != ? AND display_order >= ? AND display_order < ?`,
+      [id, targetOrder, normalizedCurrent]
+    );
+  } else if (targetOrder > normalizedCurrent) {
+    await dbRunAsync(
+      `UPDATE ${safeTable}
+       SET display_order = display_order - 1
+       WHERE id != ? AND display_order <= ? AND display_order > ?`,
+      [id, targetOrder, normalizedCurrent]
+    );
+  }
+
+  return targetOrder;
+}
+
+async function closeDisplayOrderGap(table, removedOrder) {
+  const safeTable = getOrderTable(table);
+  const normalizedOrder = parseDisplayOrder(removedOrder);
+
+  if (!normalizedOrder) {
+    return;
+  }
+
+  await dbRunAsync(
+    `UPDATE ${safeTable} SET display_order = display_order - 1 WHERE display_order > ?`,
+    [normalizedOrder]
+  );
 }
 
 function mapArticleRow(row, req) {
@@ -1336,240 +1571,271 @@ app.get("/api/cities", (req, res) => {
 // ===================== PLACES API для админки =====================
 
 // Получить все места
-app.get("/api/places", (req, res) => {
-  const status = String(req.query.status || "approved").toLowerCase();
+app.get("/api/places", async (req, res) => {
+  return withOrderLock(async () => {
+    const status = String(req.query.status || "approved").toLowerCase();
 
-  let whereSql = "WHERE COALESCE(moderation_status, 'approved') = 'approved'";
-  if (status === "all") {
-    whereSql = "";
-  } else if (status === "pending") {
-    whereSql = "WHERE COALESCE(moderation_status, 'approved') = 'pending'";
-  } else if (status === "rejected") {
-    whereSql = "WHERE COALESCE(moderation_status, 'approved') = 'rejected'";
-  }
+    let whereSql = "WHERE COALESCE(moderation_status, 'approved') = 'approved'";
+    if (status === "all") {
+      whereSql = "";
+    } else if (status === "pending") {
+      whereSql = "WHERE COALESCE(moderation_status, 'approved') = 'pending'";
+    } else if (status === "rejected") {
+      whereSql = "WHERE COALESCE(moderation_status, 'approved') = 'rejected'";
+    }
 
-  const sql = `SELECT * FROM places ${whereSql} ORDER BY id ASC`;
+    const sql = `
+      SELECT *
+      FROM places
+      ${whereSql}
+      ORDER BY COALESCE(NULLIF(display_order, 0), 2147483647) ASC, id ASC
+    `;
 
-  db.all(sql, (err, rows) => {
-    if (err) {
+    try {
+      await ensureSequentialDisplayOrders("places");
+      const rows = await dbAllAsync(sql);
+      const places = (rows || [])
+        .map(mapPlaceRow)
+        .map((place) => enrichPlaceForClient(place, req));
+
+      res.json({ ok: true, places });
+    } catch (err) {
       console.error("DB error (get places):", err);
       return res.status(500).json({
         ok: false,
         message: "Ошибка сервера при получении мест",
       });
     }
-
-    const places = (rows || [])
-      .map(mapPlaceRow)
-      .map((p) => enrichPlaceForClient(p, req));
-  
-    res.json({ ok: true, places });
   });
 });
 
 // Добавить место
-app.post("/api/places", (req, res) => {
-  const {
-    name, type, city, address, image, images, badge, rating, reviews, features, link,
-    hours, phone, 
-  } = req.body;
+app.post("/api/places", async (req, res) => {
+  return withOrderLock(async () => {
+    const {
+      name, type, city, address, displayOrder, image, images, badge, rating, reviews, features, link,
+      hours, phone, 
+    } = req.body || {};
 
-  const nameValue = (name || "").trim();
-  const cityValue = (city || "").trim();
-  const addressValue = (address || "").trim();
-  let imageValue = typeof image === "string" ? image.trim() : "";
-  const imagesArr = Array.isArray(images) ? images.filter(Boolean) : [];
+    const nameValue = (name || "").trim();
+    const cityValue = (city || "").trim();
+    const addressValue = (address || "").trim();
+    let imageValue = typeof image === "string" ? image.trim() : "";
+    const imagesArr = Array.isArray(images) ? images.filter(Boolean) : [];
 
-  if (!nameValue) {
-    return res.json({
-      ok: false,
-      message: "Название обязательно",
-    });
-  }
-
-  if (!cityValue) {
-    return res.json({
-      ok: false,
-      message: "Город обязателен",
-    });
-  }
-
-  if (!addressValue) {
-    return res.json({
-      ok: false,
-      message: "Адрес обязателен",
-    });
-  }
-
-  if (!imageValue && imagesArr.length === 0) {
-    return res.json({
-      ok: false,
-      message: "Нужно добавить хотя бы одно фото",
-    });
-  }
-
-  if (!imageValue && imagesArr.length) {
-    imageValue = imagesArr[0];
-  }
-
-  const submittedByRaw = (req.body.submittedBy || "").trim();
-  const submittedBy = submittedByRaw || null;
-  const moderationStatus = submittedBy ? "pending" : "approved";
-  const submittedAt = submittedBy ? Math.floor(Date.now() / 1000) : null;
-
-  const featuresJson = JSON.stringify(Array.isArray(features) ? features : []);
-  const imagesJson = JSON.stringify(imagesArr);
-
-  const sql = `
-    INSERT INTO places
-      (name, type, city, address, image, images, badge, rating, reviews, features, link, hours, phone, moderation_status, submitted_by, submitted_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-  `;
-
-  db.run(
-    sql,
-    [
-      nameValue,
-      type || null,
-      cityValue || null,
-      addressValue || null,
-      imageValue || null,
-      imagesJson,
-      badge || null,
-      rating ?? null,
-      reviews ?? null,
-      featuresJson,
-      link || null,
-      hours || null,
-      phone || null,
-      moderationStatus,
-      submittedBy,
-      submittedAt,
-    ],
-    function (err) {
-      if (err) {
-        console.error("DB error (insert place):", err);
-        return res.status(500).json({
-          ok: false,
-          message: "Ошибка сервера при добавлении места",
-        });
-      }
-
-      const newId = this.lastID;
-      db.get("SELECT * FROM places WHERE id = ?", [newId], (err2, row) => {
-        if (err2 || !row) {
-          return res.json({ ok: true }); // добавили, но не смогли вернуть
-        }
-        if (moderationStatus === "pending") {
-          const lines = [
-            "Новое место на модерации",
-            `Название: ${row.name || ""}`,
-            `Город: ${row.city || ""}`,
-            `Адрес: ${row.address || ""}`,
-            submittedBy ? `Отправил: ${submittedBy}` : "",
-            `ID: ${row.id}`,
-          ].filter(Boolean);
-          void sendTelegramMessage(lines.join("\n"));
-        }
-        res.json({
-          ok: true,
-          place: mapPlaceRow(row),
-        });
+    if (!nameValue) {
+      return res.json({
+        ok: false,
+        message: "Название обязательно",
       });
     }
-  );
+
+    if (!cityValue) {
+      return res.json({
+        ok: false,
+        message: "Город обязателен",
+      });
+    }
+
+    if (!addressValue) {
+      return res.json({
+        ok: false,
+        message: "Адрес обязателен",
+      });
+    }
+
+    if (!imageValue && imagesArr.length === 0) {
+      return res.json({
+        ok: false,
+        message: "Нужно добавить хотя бы одно фото",
+      });
+    }
+
+    if (!imageValue && imagesArr.length) {
+      imageValue = imagesArr[0];
+    }
+
+    const submittedByRaw = (req.body.submittedBy || "").trim();
+    const submittedBy = submittedByRaw || null;
+    const moderationStatus = submittedBy ? "pending" : "approved";
+    const submittedAt = submittedBy ? Math.floor(Date.now() / 1000) : null;
+    const requestedOrder = parseDisplayOrder(displayOrder);
+
+    const featuresJson = JSON.stringify(Array.isArray(features) ? features : []);
+    const imagesJson = JSON.stringify(imagesArr);
+
+    const sql = `
+      INSERT INTO places
+        (name, type, city, address, display_order, image, images, badge, rating, reviews, features, link, hours, phone, moderation_status, submitted_by, submitted_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `;
+
+    try {
+      await ensureSequentialDisplayOrders("places");
+
+      const newId = await withTransaction(async () => {
+        const targetOrder = await allocateDisplayOrderOnInsert("places", requestedOrder);
+        const result = await dbRunAsync(sql, [
+          nameValue,
+          type || null,
+          cityValue || null,
+          addressValue || null,
+          targetOrder,
+          imageValue || null,
+          imagesJson,
+          badge || null,
+          rating ?? null,
+          reviews ?? null,
+          featuresJson,
+          link || null,
+          hours || null,
+          phone || null,
+          moderationStatus,
+          submittedBy,
+          submittedAt,
+        ]);
+        return result.lastID;
+      });
+
+      const row = await dbGetAsync("SELECT * FROM places WHERE id = ?", [newId]);
+      if (!row) {
+        return res.json({ ok: true });
+      }
+
+      if (moderationStatus === "pending") {
+        const lines = [
+          "Новое место на модерации",
+          `Название: ${row.name || ""}`,
+          `Город: ${row.city || ""}`,
+          `Адрес: ${row.address || ""}`,
+          submittedBy ? `Отправил: ${submittedBy}` : "",
+          `ID: ${row.id}`,
+        ].filter(Boolean);
+        void sendTelegramMessage(lines.join("\n"));
+      }
+
+      return res.json({
+        ok: true,
+        place: mapPlaceRow(row),
+      });
+    } catch (err) {
+      console.error("DB error (insert place):", err);
+      return res.status(500).json({
+        ok: false,
+        message: "Ошибка сервера при добавлении места",
+      });
+    }
+  });
 });
 
 // Обновить место
-app.put("/api/places/:id", (req, res) => {
-  const id = Number(req.params.id);
-  if (!Number.isInteger(id)) {
-    return res.json({
-      ok: false,
-      message: "Некорректный id",
-    });
-  }
+app.put("/api/places/:id", async (req, res) => {
+  return withOrderLock(async () => {
+    const id = Number(req.params.id);
+    if (!Number.isInteger(id)) {
+      return res.json({
+        ok: false,
+        message: "Некорректный id",
+      });
+    }
 
-  const {
-    name, type, city, address, image, images, badge, rating, reviews, features, link,
-    hours, phone, 
-  } = req.body;
+    const {
+      name, type, city, address, displayOrder, image, images, badge, rating, reviews, features, link,
+      hours, phone, 
+    } = req.body || {};
 
-  if (!name || !name.trim()) {
-    return res.json({
-      ok: false,
-      message: "Название обязательно",
-    });
-  }
+    if (!name || !name.trim()) {
+      return res.json({
+        ok: false,
+        message: "Название обязательно",
+      });
+    }
 
-  const featuresJson = JSON.stringify(Array.isArray(features) ? features : []);
-  const imagesJson = JSON.stringify(Array.isArray(images) ? images : []);
+    const featuresJson = JSON.stringify(Array.isArray(features) ? features : []);
+    const imagesJson = JSON.stringify(Array.isArray(images) ? images : []);
+    const requestedOrder = parseDisplayOrder(displayOrder);
 
-  const sql = `
-    UPDATE places
-    SET
-      name = ?,
-      type = ?,
-      city = ?,
-      address = ?,
-      image = ?,
-      images = ?,
-      badge = ?,
-      rating = ?,
-      reviews = ?,
-      features = ?,
-      link = ?,
-      hours = ?,
-      phone = ?
-    WHERE id = ?
-  `;
+    const sql = `
+      UPDATE places
+      SET
+        name = ?,
+        type = ?,
+        city = ?,
+        address = ?,
+        display_order = ?,
+        image = ?,
+        images = ?,
+        badge = ?,
+        rating = ?,
+        reviews = ?,
+        features = ?,
+        link = ?,
+        hours = ?,
+        phone = ?
+      WHERE id = ?
+    `;
 
-  db.run(
-    sql,
-    [
-      name.trim(),
-      type || null,
-      city || null,
-      address || null,
-      image || null,
-      imagesJson,
-      badge || null,
-      rating ?? null,
-      reviews ?? null,
-      featuresJson,
-      link || null,
-      hours || null,
-      phone || null,
-      id,
-    ],
-    function (err) {
-      if (err) {
-        console.error("DB error (update place):", err);
-        return res.status(500).json({
-          ok: false,
-          message: "Ошибка сервера при обновлении места",
-        });
-      }
+    try {
+      await ensureSequentialDisplayOrders("places");
+      const existing = await dbGetAsync("SELECT * FROM places WHERE id = ?", [id]);
 
-      if (this.changes === 0) {
+      if (!existing) {
         return res.json({
           ok: false,
           message: "Место не найдено",
         });
       }
 
-      db.get("SELECT * FROM places WHERE id = ?", [id], (err2, row) => {
-        if (err2 || !row) {
-          return res.json({ ok: true });
+      await withTransaction(async () => {
+        const targetOrder = await moveDisplayOrder("places", id, existing.display_order, requestedOrder);
+        const result = await dbRunAsync(sql, [
+          name.trim(),
+          type || null,
+          city || null,
+          address || null,
+          targetOrder,
+          image || null,
+          imagesJson,
+          badge || null,
+          rating ?? null,
+          reviews ?? null,
+          featuresJson,
+          link || null,
+          hours || null,
+          phone || null,
+          id,
+        ]);
+
+        if (result.changes === 0) {
+          throw new Error("PLACE_NOT_FOUND");
         }
-        const place = mapPlaceRow(row);
-        res.json({
-          ok: true,
-          place: enrichPlaceForClient(place, req),
+      });
+
+      const row = await dbGetAsync("SELECT * FROM places WHERE id = ?", [id]);
+      if (!row) {
+        return res.json({ ok: true });
+      }
+
+      const place = mapPlaceRow(row);
+      return res.json({
+        ok: true,
+        place: enrichPlaceForClient(place, req),
+      });
+    } catch (err) {
+      if (err?.message === "PLACE_NOT_FOUND") {
+        return res.json({
+          ok: false,
+          message: "Место не найдено",
         });
+      }
+
+      console.error("DB error (update place):", err);
+      return res.status(500).json({
+        ok: false,
+        message: "Ошибка сервера при обновлении места",
       });
     }
-  );
+  });
 });
 
 // Одобрить место (модерация)
@@ -1619,32 +1885,50 @@ app.post("/api/places/:id/reject", (req, res) => {
 });
 
 // Удалить место
-app.delete("/api/places/:id", (req, res) => {
-  const id = Number(req.params.id);
-  if (!Number.isInteger(id)) {
-    return res.json({
-      ok: false,
-      message: "Некорректный id",
-    });
-  }
+app.delete("/api/places/:id", async (req, res) => {
+  return withOrderLock(async () => {
+    const id = Number(req.params.id);
+    if (!Number.isInteger(id)) {
+      return res.json({
+        ok: false,
+        message: "Некорректный id",
+      });
+    }
 
-  db.run("DELETE FROM places WHERE id = ?", [id], function (err) {
-    if (err) {
+    try {
+      await ensureSequentialDisplayOrders("places");
+      const existing = await dbGetAsync("SELECT id, display_order FROM places WHERE id = ?", [id]);
+
+      if (!existing) {
+        return res.json({
+          ok: false,
+          message: "Место не найдено",
+        });
+      }
+
+      await withTransaction(async () => {
+        const result = await dbRunAsync("DELETE FROM places WHERE id = ?", [id]);
+        if (result.changes === 0) {
+          throw new Error("PLACE_NOT_FOUND");
+        }
+        await closeDisplayOrderGap("places", existing.display_order);
+      });
+
+      return res.json({ ok: true });
+    } catch (err) {
+      if (err?.message === "PLACE_NOT_FOUND") {
+        return res.json({
+          ok: false,
+          message: "Место не найдено",
+        });
+      }
+
       console.error("DB error (delete place):", err);
       return res.status(500).json({
         ok: false,
         message: "Ошибка сервера при удалении места",
       });
     }
-
-    if (this.changes === 0) {
-      return res.json({
-        ok: false,
-        message: "Место не найдено",
-      });
-    }
-
-    res.json({ ok: true });
   });
 });
 
@@ -2121,60 +2405,63 @@ app.delete("/api/places/:placeId/reviews/:reviewId", (req, res) => {
 // ===================== ARTICLES API =====================
 
 // Публичный список статей (approved) + можно запросить draft/pending для профиля/админки
-app.get("/api/articles", (req, res) => {
-  const status = String(req.query.status || "approved").toLowerCase();
-  const authorId = req.query.authorId ? Number(req.query.authorId) : null;
-  const authorLogin = (req.query.authorLogin || "").trim();
+app.get("/api/articles", async (req, res) => {
+  return withOrderLock(async () => {
+    const status = String(req.query.status || "approved").toLowerCase();
+    const authorId = req.query.authorId ? Number(req.query.authorId) : null;
+    const authorLogin = (req.query.authorLogin || "").trim();
 
-  let where = "WHERE a.status = 'approved'";
-  const params = [];
+    let where = "WHERE a.status = 'approved'";
+    const params = [];
 
-  if (status === "all") {
-    where = "";
-  } else if (["approved", "pending", "rejected", "draft"].includes(status)) {
-    where = "WHERE a.status = ?";
-    params.push(status);
-  }
-
-  if ((authorId && Number.isFinite(authorId)) || authorLogin) {
-    where = where ? `${where} AND` : "WHERE";
-    if (authorId && Number.isFinite(authorId)) {
-      where += " a.author_id = ?";
-      params.push(authorId);
-    } else {
-      where += " a.author_login = ?";
-      params.push(authorLogin);
+    if (status === "all") {
+      where = "";
+    } else if (["approved", "pending", "rejected", "draft"].includes(status)) {
+      where = "WHERE a.status = ?";
+      params.push(status);
     }
-  }
 
-  const sql = `
-    SELECT
-      a.*,
-      u.first_name AS author_first_name,
-      u.last_name AS author_last_name,
-      u.avatar AS author_avatar
-    FROM articles a
-    LEFT JOIN users u
-      ON (u.id = a.author_id OR u.login = a.author_login)
-    ${where}
-    ORDER BY a.display_order DESC, a.published_at DESC, a.created_at DESC, a.id DESC
-  `;
+    if ((authorId && Number.isFinite(authorId)) || authorLogin) {
+      where = where ? `${where} AND` : "WHERE";
+      if (authorId && Number.isFinite(authorId)) {
+        where += " a.author_id = ?";
+        params.push(authorId);
+      } else {
+        where += " a.author_login = ?";
+        params.push(authorLogin);
+      }
+    }
 
-  db.all(sql, params, (err, rows) => {
-    if (err) {
+    const sql = `
+      SELECT
+        a.*,
+        u.first_name AS author_first_name,
+        u.last_name AS author_last_name,
+        u.avatar AS author_avatar
+      FROM articles a
+      LEFT JOIN users u
+        ON (u.id = a.author_id OR u.login = a.author_login)
+      ${where}
+      ORDER BY COALESCE(NULLIF(a.display_order, 0), 2147483647) ASC, a.published_at DESC, a.created_at DESC, a.id DESC
+    `;
+
+    try {
+      await ensureSequentialDisplayOrders("articles");
+      const rows = await dbAllAsync(sql, params);
+
+      const list = (rows || []).map((row) => {
+        const article = mapArticleRow(row, req);
+        return {
+          ...article,
+          coverImage: normalizeArticleMedia(article.coverImage),
+        };
+      });
+
+      return res.json({ ok: true, articles: list });
+    } catch (err) {
       console.error("DB error (get articles):", err);
       return res.status(500).json({ ok: false, message: "DB error" });
     }
-
-    const list = (rows || []).map((row) => {
-      const a = mapArticleRow(row, req);
-      return {
-        ...a,
-        coverImage: normalizeArticleMedia(a.coverImage),
-      };
-    });
-
-    return res.json({ ok: true, articles: list });
   });
 });
 
@@ -2227,100 +2514,100 @@ app.get("/api/articles/:id", (req, res) => {
 
 // Создать/обновить черновик или отправить на модерацию
 // body: { title, coverImage, content, excerpt?, action: "draft"|"submit", userId, userLogin }
-app.post("/api/articles", (req, res) => {
-  const { title, coverImage, content, excerpt, action } = req.body || {};
-  const titleValue = String(title || "").trim();
-  const cover = normalizeArticleMedia(coverImage);
+app.post("/api/articles", async (req, res) => {
+  return withOrderLock(async () => {
+    const { title, coverImage, content, excerpt, action } = req.body || {};
+    const titleValue = String(title || "").trim();
+    const cover = normalizeArticleMedia(coverImage);
 
-  let blocks = [];
-  try {
-    blocks = Array.isArray(content) ? content : JSON.parse(content || "[]");
-  } catch {
-    blocks = [];
-  }
-
-  resolveRequestUser(req, (uErr, requester) => {
-    if (uErr) return res.status(500).json({ ok: false, message: "DB error" });
-    if (!requester.login || requester.login === "admin") {
-      return res.status(403).json({ ok: false, message: "Only authorized users can create articles" });
+    let blocks = [];
+    try {
+      blocks = Array.isArray(content) ? content : JSON.parse(content || "[]");
+    } catch {
+      blocks = [];
     }
 
-    if (!titleValue) return res.json({ ok: false, message: "Заголовок обязателен" });
-
-    // если submit — обложка обязательна
-    if (String(action || "draft") === "submit" && !cover) {
-      return res.json({ ok: false, code: "NO_COVER", message: "Нужна обложка" });
-    }
-
-    const status = String(action || "draft") === "submit" ? "pending" : "draft";
-    const now = Math.floor(Date.now() / 1000);
-
-    const sql = `
-      INSERT INTO articles
-        (title, cover_image, content_json, excerpt, status, author_id, author_login, submitted_at, created_at, updated_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `;
-
-    db.run(
-      sql,
-      [
-        titleValue,
-        cover || "", // в draft можно пусто (но лучше сразу ставить)
-        JSON.stringify(blocks || []),
-        String(excerpt || "").slice(0, 280),
-        status,
-        requester.id ?? null,
-        requester.login,
-        status === "pending" ? now : null,
-        now,
-        now,
-      ],
-      function (err) {
-        if (err) {
-          console.error("DB error (insert article):", err);
-          return res.status(500).json({ ok: false, message: "DB error" });
-        }
-
-        const newId = this.lastID;
-
-        if (status === "pending") {
-          const lines = [
-            "Новая статья на модерации",
-            `Заголовок: ${titleValue}`,
-            `Автор: ${requester.login}`,
-            `ID: ${newId}`,
-          ];
-          void sendTelegramMessage(lines.join("\n"));
-        }
-
-        return res.json({ ok: true, id: newId });
+    try {
+      const requester = await resolveRequestUserAsync(req);
+      if (!requester.login || requester.login === "admin") {
+        return res.status(403).json({ ok: false, message: "Only authorized users can create articles" });
       }
-    );
+
+      if (!titleValue) return res.json({ ok: false, message: "Заголовок обязателен" });
+
+      if (String(action || "draft") === "submit" && !cover) {
+        return res.json({ ok: false, code: "NO_COVER", message: "Нужна обложка" });
+      }
+
+      const status = String(action || "draft") === "submit" ? "pending" : "draft";
+      const now = Math.floor(Date.now() / 1000);
+      const sql = `
+        INSERT INTO articles
+          (title, cover_image, content_json, excerpt, status, display_order, author_id, author_login, submitted_at, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `;
+
+      await ensureSequentialDisplayOrders("articles");
+
+      const newId = await withTransaction(async () => {
+        const targetOrder = await allocateDisplayOrderOnInsert("articles", null);
+        const result = await dbRunAsync(sql, [
+          titleValue,
+          cover || "",
+          JSON.stringify(blocks || []),
+          String(excerpt || "").slice(0, 280),
+          status,
+          targetOrder,
+          requester.id ?? null,
+          requester.login,
+          status === "pending" ? now : null,
+          now,
+          now,
+        ]);
+        return result.lastID;
+      });
+
+      if (status === "pending") {
+        const lines = [
+          "Новая статья на модерации",
+          `Заголовок: ${titleValue}`,
+          `Автор: ${requester.login}`,
+          `ID: ${newId}`,
+        ];
+        void sendTelegramMessage(lines.join("\n"));
+      }
+
+      return res.json({ ok: true, id: newId });
+    } catch (err) {
+      console.error("DB error (insert article):", err);
+      return res.status(500).json({ ok: false, message: "DB error" });
+    }
   });
 });
 
 // Редактировать статью (черновик/ожидание) — автор или админ
-app.put("/api/articles/:id", (req, res) => {
-  const id = Number(req.params.id);
-  if (!Number.isInteger(id)) return res.status(400).json({ ok: false, message: "Invalid id" });
+app.put("/api/articles/:id", async (req, res) => {
+  return withOrderLock(async () => {
+    const id = Number(req.params.id);
+    if (!Number.isInteger(id)) return res.status(400).json({ ok: false, message: "Invalid id" });
 
-  const { title, coverImage, content, excerpt, status, displayOrder } = req.body || {};
+    const { title, coverImage, content, excerpt, status, displayOrder } = req.body || {};
 
-  let blocks = [];
-  try {
-    blocks = Array.isArray(content) ? content : JSON.parse(content || "[]");
-  } catch {
-    blocks = [];
-  }
+    let blocks = [];
+    try {
+      blocks = Array.isArray(content) ? content : JSON.parse(content || "[]");
+    } catch {
+      blocks = [];
+    }
 
-  const titleValue = String(title || "").trim();
-  const cover = normalizeArticleMedia(coverImage);
+    const titleValue = String(title || "").trim();
+    const cover = normalizeArticleMedia(coverImage);
 
-  resolveRequestUser(req, (uErr, requester) => {
-    if (uErr) return res.status(500).json({ ok: false, message: "DB error" });
+    try {
+      const requester = await resolveRequestUserAsync(req);
+      await ensureSequentialDisplayOrders("articles");
 
-    db.get("SELECT * FROM articles WHERE id = ? LIMIT 1", [id], (err, row) => {
-      if (err) return res.status(500).json({ ok: false, message: "DB error" });
+      const row = await dbGetAsync("SELECT * FROM articles WHERE id = ? LIMIT 1", [id]);
       if (!row) return res.status(404).json({ ok: false, message: "Not found" });
 
       const existing = mapArticleRow(row);
@@ -2331,12 +2618,10 @@ app.put("/api/articles/:id", (req, res) => {
 
       if (!isAdmin && !isOwner) return res.status(403).json({ ok: false, message: "Forbidden" });
 
-      // если админ — может менять status/order
       const nextStatus = isAdmin && status ? String(status) : existing.status;
-      const nextOrder = isAdmin && displayOrder != null ? Number(displayOrder) : existing.displayOrder;
-
-      // если переводим в approved — обложка обязательна
+      const requestedOrder = isAdmin ? parseDisplayOrder(displayOrder) : existing.displayOrder;
       const finalCover = cover || existing.coverImage || "";
+
       if (nextStatus === "approved" && !finalCover) {
         return res.json({ ok: false, code: "NO_COVER", message: "Нужна обложка" });
       }
@@ -2357,28 +2642,26 @@ app.put("/api/articles/:id", (req, res) => {
         WHERE id = ?
       `;
 
-      db.run(
-        updateSql,
-        [
+      await withTransaction(async () => {
+        const targetOrder = await moveDisplayOrder("articles", id, existing.displayOrder, requestedOrder);
+        await dbRunAsync(updateSql, [
           titleValue || existing.title,
           normalizeArticleMedia(finalCover),
           JSON.stringify(blocks || existing.content || []),
           String(excerpt || existing.excerpt || "").slice(0, 280),
           nextStatus,
-          nextOrder,
+          targetOrder,
           publishedAt,
           now,
           id,
-        ],
-        function (e2) {
-          if (e2) {
-            console.error("DB error (update article):", e2);
-            return res.status(500).json({ ok: false, message: "DB error" });
-          }
-          return res.json({ ok: true });
-        }
-      );
-    });
+        ]);
+      });
+
+      return res.json({ ok: true });
+    } catch (err) {
+      console.error("DB error (update article):", err);
+      return res.status(500).json({ ok: false, message: "DB error" });
+    }
   });
 });
 
@@ -2513,15 +2796,19 @@ app.post("/api/articles/:id/favorite", (req, res) => {
 });
 
 // ✅ Удалить статью (админ или автор)
-app.delete("/api/articles/:id", (req, res) => {
-  const id = Number(req.params.id);
-  if (!Number.isInteger(id)) return res.status(400).json({ ok: false, message: "Invalid id" });
+app.delete("/api/articles/:id", async (req, res) => {
+  return withOrderLock(async () => {
+    const id = Number(req.params.id);
+    if (!Number.isInteger(id)) return res.status(400).json({ ok: false, message: "Invalid id" });
 
-  resolveRequestUser(req, (uErr, requester) => {
-    if (uErr) return res.status(500).json({ ok: false, message: "DB error" });
+    try {
+      const requester = await resolveRequestUserAsync(req);
+      await ensureSequentialDisplayOrders("articles");
 
-    db.get("SELECT id, status, author_id, author_login FROM articles WHERE id = ? LIMIT 1", [id], (e1, row) => {
-      if (e1) return res.status(500).json({ ok: false, message: "DB error" });
+      const row = await dbGetAsync(
+        "SELECT id, status, author_id, author_login, display_order FROM articles WHERE id = ? LIMIT 1",
+        [id]
+      );
       if (!row) return res.status(404).json({ ok: false, message: "Not found" });
 
       const isAdmin = requester.login === "admin";
@@ -2529,21 +2816,27 @@ app.delete("/api/articles/:id", (req, res) => {
         (requester.id && row.author_id && requester.id === row.author_id) ||
         (requester.login && row.author_login && requester.login === row.author_login);
 
-      // ✅ автор может удалять хотя бы draft (и pending тоже можно оставить)
       if (!isAdmin && !(isOwner && (row.status === "draft" || row.status === "pending"))) {
         return res.status(403).json({ ok: false, message: "Forbidden" });
       }
 
-      // favorites не связаны FK — чистим руками
-      db.run("DELETE FROM article_favorites WHERE article_id = ?", [id], () => {
-        db.run("DELETE FROM article_comments WHERE article_id = ?", [id], () => {
-          db.run("DELETE FROM articles WHERE id = ?", [id], function (e2) {
-            if (e2) return res.status(500).json({ ok: false, message: "DB error" });
-            return res.json({ ok: true });
-          });
-        });
+      await withTransaction(async () => {
+        await dbRunAsync("DELETE FROM article_favorites WHERE article_id = ?", [id]);
+        await dbRunAsync("DELETE FROM article_comments WHERE article_id = ?", [id]);
+        const result = await dbRunAsync("DELETE FROM articles WHERE id = ?", [id]);
+        if (!result.changes) {
+          throw new Error("ARTICLE_NOT_FOUND");
+        }
+        await closeDisplayOrderGap("articles", row.display_order);
       });
-    });
+
+      return res.json({ ok: true });
+    } catch (err) {
+      if (err?.message === "ARTICLE_NOT_FOUND") {
+        return res.status(404).json({ ok: false, message: "Not found" });
+      }
+      return res.status(500).json({ ok: false, message: "DB error" });
+    }
   });
 });
 

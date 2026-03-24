@@ -101,6 +101,7 @@ const emptyForm = {
   type: "",
   city: "",
   address: "",
+  displayOrder: "",
   image: "",
   badge: "",
   rating: "",
@@ -228,7 +229,7 @@ export default function AdminPage() {
   const [articleEdit, setArticleEdit] = useState({
     title: "",
     coverImage: "",
-    displayOrder: 0,
+    displayOrder: "",
     status: "draft",
     contentJson: "[]",
     excerpt: "",
@@ -432,6 +433,7 @@ export default function AdminPage() {
       type: place.type || "",
       city: place.city || "",
       address: place.address || "",
+      displayOrder: place.displayOrder != null && Number(place.displayOrder) > 0 ? String(place.displayOrder) : "",
       image: place.image || "",
       badge: place.badge || "",
       rating: place.rating != null ? String(place.rating) : "",
@@ -664,6 +666,7 @@ export default function AdminPage() {
         type: editForm.type.trim(),
         city: editForm.city.trim(),
         address: editForm.address.trim(),
+        displayOrder: editForm.displayOrder ? Number(editForm.displayOrder) : null,
         image: imagesForServer[0] || editForm.image.trim(),
         images: imagesForServer,
         badge: editForm.badge.trim(),
@@ -740,6 +743,7 @@ export default function AdminPage() {
         type: createForm.type.trim(),
         city: cityValue,
         address: addressValue,
+        displayOrder: createForm.displayOrder ? Number(createForm.displayOrder) : null,
         image: imagesForServer[0] || imageValue,
         images: imagesForServer,
         badge: createForm.badge.trim(),
@@ -953,7 +957,7 @@ export default function AdminPage() {
       setArticleEdit({
         title: "",
         coverImage: "",
-        displayOrder: 0,
+        displayOrder: "",
         status: "draft",
         contentJson: "[]",
         excerpt: "",
@@ -973,7 +977,7 @@ export default function AdminPage() {
     setArticleEdit({
       title: a.title || "",
       coverImage: a.coverImage || "",
-      displayOrder: Number(a.displayOrder || 0),
+      displayOrder: a.displayOrder != null && Number(a.displayOrder) > 0 ? String(a.displayOrder) : "",
       status: a.status || "pending",
       contentJson,
       excerpt: a.excerpt || "",
@@ -1101,7 +1105,7 @@ export default function AdminPage() {
       content: blocks,
       excerpt: articleEdit.excerpt,
       status: articleEdit.status,
-      displayOrder: Number(articleEdit.displayOrder || 0),
+      displayOrder: articleEdit.displayOrder ? Number(articleEdit.displayOrder) : null,
       userId: user?.id ?? null,
       userLogin: user?.login ?? null,
     };
@@ -1225,7 +1229,9 @@ export default function AdminPage() {
                       }
                       onClick={() => handleSelectPlace(place)}
                     >
-                      <span className="admin__place-btn-name">{place.name}</span>
+                      <span className="admin__place-btn-name">
+                        №{place.displayOrder || "—"} · {place.name}
+                      </span>
                       <span className="admin__place-btn-city">{place.city}</span>
                     </button>
                   ))}
@@ -1253,7 +1259,7 @@ export default function AdminPage() {
                         <div className="admin__moderation-info">
                           <span className="admin__moderation-name">{place.name}</span>
                           <span className="admin__moderation-meta">
-                            {[place.city, place.address].filter(Boolean).join(" • ")}
+                            {[`№${place.displayOrder || "—"}`, place.city, place.address].filter(Boolean).join(" • ")}
                           </span>
                           {place.submitted_by && (
                             <span className="admin__moderation-meta">Отправил: {place.submitted_by}</span>
@@ -1321,6 +1327,15 @@ export default function AdminPage() {
                         value={editForm.address}
                         onChange={handleEditChange}
                         required
+                      />
+                      <input
+                        type="number"
+                        min="1"
+                        name="displayOrder"
+                        className="admin-input"
+                        placeholder="Номер на сайте"
+                        value={editForm.displayOrder}
+                        onChange={handleEditChange}
                       />
                       <input
                         type="text"
@@ -1613,6 +1628,15 @@ export default function AdminPage() {
                       required
                     />
                     <input
+                      type="number"
+                      min="1"
+                      name="displayOrder"
+                      className="admin-input"
+                      placeholder="Номер на сайте"
+                      value={createForm.displayOrder}
+                      onChange={handleCreateChange}
+                    />
+                    <input
                       type="text"
                       name="image"
                       className="admin-input"
@@ -1772,7 +1796,9 @@ export default function AdminPage() {
                       className={"admin__place-btn" + (a.id === selectedArticleId ? " admin__place-btn--active" : "")}
                       onClick={() => handleSelectArticle(a)}
                     >
-                      <span className="admin__place-btn-name">{a.title}</span>
+                      <span className="admin__place-btn-name">
+                        №{a.displayOrder || "—"} · {a.title}
+                      </span>
                       <span className="admin__place-btn-city">{a.authorLogin ? `@${a.authorLogin}` : ""}</span>
                     </button>
                   ))}
@@ -1792,7 +1818,9 @@ export default function AdminPage() {
                       <div key={a.id} className="admin__moderation-item">
                         <div className="admin__moderation-info">
                           <span className="admin__moderation-name">{a.title}</span>
-                          <span className="admin__moderation-meta">{a.authorLogin ? `@${a.authorLogin}` : ""}</span>
+                          <span className="admin__moderation-meta">
+                            {[`№${a.displayOrder || "—"}`, a.authorLogin ? `@${a.authorLogin}` : ""].filter(Boolean).join(" • ")}
+                          </span>
                         </div>
                         <div className="admin__moderation-actions">
                           <button type="button" className="admin__moderation-open" onClick={() => handleSelectArticle(a)}>
@@ -1995,13 +2023,14 @@ export default function AdminPage() {
                         </label>
 
                         <label className="admin-label">
-                          Порядок отображения (displayOrder)
+                          Номер на сайте
                           <input
                             className="admin-input"
                             type="number"
+                            min="1"
                             value={articleEdit.displayOrder}
                             onChange={(e) => setArticleEdit((s) => ({ ...s, displayOrder: e.target.value }))}
-                            placeholder="0"
+                            placeholder="Например: 1"
                           />
                         </label>
 
