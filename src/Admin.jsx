@@ -3,6 +3,7 @@ import { useEffect, useState, useRef, useMemo } from "react";
 import { useNavigate } from "react-router-dom";
 import "./App.css";
 import SEO, { SEO_SITE_URL } from "./SEO.jsx";
+import { API_BASE, readJsonResponse } from "./api.js";
 
 <SEO
   title="Админ-панель — ALLSPACE"
@@ -10,9 +11,6 @@ import SEO, { SEO_SITE_URL } from "./SEO.jsx";
   url={`${SEO_SITE_URL}/admin`}
   noindex={true}
 />
-
-const API_BASE =
-  import.meta.env.VITE_API_BASE || (import.meta.env.PROD ? "" : "http://localhost:3001");
 
 function resolveMediaUrl(url) {
   if (!url) return url;
@@ -25,7 +23,7 @@ async function uploadFiles(files) {
   const fd = new FormData();
   Array.from(files || []).forEach((f) => fd.append("files", f));
   const res = await fetch(`${API_BASE}/api/upload`, { method: "POST", body: fd });
-  const data = await res.json();
+  const data = await readJsonResponse(res, "Загрузка изображений");
   if (!data.ok) throw new Error(data.message || "Не удалось загрузить файл");
   return data.urls || [];
 }
@@ -759,7 +757,7 @@ export default function AdminPage() {
         body: JSON.stringify(body),
       });
 
-      const data = await res.json();
+      const data = await readJsonResponse(res, "Добавление места");
       if (!data.ok) {
         setError(data.message || "Не удалось добавить место");
         return;

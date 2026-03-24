@@ -2954,6 +2954,40 @@ app.get("/api/admin/stats/overview", (req, res) => {
 
 // ===================== SERVER START =====================
 
+app.use("/api", (req, res) => {
+  return res.status(404).json({
+    ok: false,
+    message: `API route not found: ${req.method} ${req.originalUrl}`,
+  });
+});
+
+app.use((err, req, res, next) => {
+  if (!req.originalUrl.startsWith("/api/")) {
+    return next(err);
+  }
+
+  if (err instanceof multer.MulterError) {
+    const message =
+      err.code === "LIMIT_FILE_SIZE"
+        ? "Файл слишком большой. Максимальный размер: 10 МБ."
+        : err.code === "LIMIT_FILE_COUNT"
+        ? "Слишком много файлов. Максимум: 20."
+        : "Ошибка загрузки файлов.";
+
+    return res.status(400).json({
+      ok: false,
+      message,
+    });
+  }
+
+  console.error("API error:", err);
+
+  return res.status(err?.status || 500).json({
+    ok: false,
+    message: err?.message || "Ошибка сервера",
+  });
+});
+
 app.listen(PORT, HOST, () => {
   console.log(`Server is running on http://${HOST}:${PORT}`);
 });

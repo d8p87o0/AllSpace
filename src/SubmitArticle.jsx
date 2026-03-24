@@ -4,6 +4,7 @@ import { useLocation, useNavigate } from "react-router-dom";
 import { normalizeBlocks, buildExcerpt } from "./telegraphEditor";
 import "./App.css";
 import SEO, { SEO_SITE_URL } from "./SEO.jsx";
+import { API_BASE } from "./api.js";
 
 <SEO
   title="Добавить статью — ALLSPACE"
@@ -11,9 +12,6 @@ import SEO, { SEO_SITE_URL } from "./SEO.jsx";
   url={`${SEO_SITE_URL}/submit-article`}
   noindex={true}
 />
-
-const API_BASE =
-  import.meta.env.VITE_API_BASE || (import.meta.env.PROD ? "" : "http://localhost:3001");
 
 function resolveMediaUrl(url) {
   if (!url) return url;

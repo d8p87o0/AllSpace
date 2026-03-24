@@ -3,10 +3,7 @@ import { useEffect, useMemo, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import "./App.css";
 import SEO, { SEO_SITE_URL } from "./SEO.jsx";
-
-const API_BASE =
-  import.meta.env.VITE_API_BASE ||
-  (import.meta.env.PROD ? "" : "http://localhost:3001");
+import { API_BASE } from "./api.js";
 
 function formatDateFromUnix(sec) {
   if (!sec) return "";

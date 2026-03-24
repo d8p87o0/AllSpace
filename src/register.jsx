@@ -3,6 +3,7 @@ import { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import "./App.css";
 import SEO, { SEO_SITE_URL } from "./SEO.jsx";
+import { API_BASE } from "./api.js";
 
 <SEO
   title="Регистрация — ALLSPACE"
@@ -10,10 +11,6 @@ import SEO, { SEO_SITE_URL } from "./SEO.jsx";
   url={`${SEO_SITE_URL}/register`}
   noindex={true}
 />
-
-const API_BASE =
-  import.meta.env.VITE_API_BASE ||
-  (import.meta.env.PROD ? "" : "http://localhost:3001");
 
 function RegisterPage() {
   const navigate = useNavigate();
@@ -385,4 +382,3 @@ function RegisterPage() {
 }
 
 export default RegisterPage;
-

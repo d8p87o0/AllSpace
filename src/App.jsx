@@ -13,10 +13,7 @@ import SubmitArticlePage from "./SubmitArticle.jsx";
 import ArticlePage from "./ArticlePage.jsx";
 import { useLocation } from "react-router-dom";
 import SEO, { SEO_SITE_URL } from "./SEO.jsx";
-
-const API_BASE =
-  import.meta.env.VITE_API_BASE ||
-  (import.meta.env.PROD ? "" : "http://localhost:3001");
+import { API_BASE } from "./api.js";
 
 function resolveMediaUrl(url) {
   if (!url) return url;
@@ -1698,4 +1695,3 @@ useEffect(() => {
 }
 
 export default App;
-

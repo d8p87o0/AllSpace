@@ -3,6 +3,7 @@ import { useLocation, useNavigate } from "react-router-dom";
 import { useState } from "react";
 import "./App.css";
 import SEO, { SEO_SITE_URL } from "./SEO.jsx";
+import { API_BASE } from "./api.js";
 
 <SEO
   title="Подтверждение email — ALLSPACE"
@@ -10,10 +11,6 @@ import SEO, { SEO_SITE_URL } from "./SEO.jsx";
   url={`${SEO_SITE_URL}/verify-email`}
   noindex={true}
 />
-
-const API_BASE =
-  import.meta.env.VITE_API_BASE ||
-  (import.meta.env.PROD ? "" : "http://localhost:3001");
 
 function VerifyEmailPage() {
   const location = useLocation();
@@ -113,4 +110,3 @@ function VerifyEmailPage() {
 }
 
 export default VerifyEmailPage;
-
