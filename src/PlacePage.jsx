@@ -2,10 +2,7 @@
 import { useEffect, useState } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import SEO, { SEO_SITE_URL } from "./SEO.jsx";
-
-const API_BASE =
-  import.meta.env.VITE_API_BASE ||
-  (import.meta.env.PROD ? "" : "http://localhost:3001");
+import { API_BASE } from "./api.js";
 const FAVORITES_PREFIX = "favoritePlaces_";
 const REVIEW_IMAGES_LIMIT = 6;
 
@@ -127,6 +124,27 @@ function buildGalleryImages(src) {
     images.push(`${base}${i}${ext}`);
   }
   return images;
+}
+
+function resolveMediaUrl(url) {
+  if (!url) return url;
+  if (url.startsWith("/photos/")) return `${API_BASE}${url}`;
+  return url;
+}
+
+function normalizePhoneForLink(phone) {
+  if (!phone) return null;
+  const cleaned = String(phone).replace(/[^\d+]/g, "");
+  return cleaned || null;
+}
+
+function hoursToLines(hours) {
+  if (!hours) return [];
+  return String(hours)
+    .replace(/\r/g, "\n")
+    .split("\n")
+    .map((line) => line.trim())
+    .filter(Boolean);
 }
 
 
@@ -1700,4 +1718,3 @@ export default function PlacePage() {
     </>
   );
 }
-
