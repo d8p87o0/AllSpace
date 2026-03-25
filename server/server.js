@@ -69,6 +69,10 @@ app.use(
 );
 app.use(express.json());
 
+app.get("/healthz", (_req, res) => {
+  res.json({ ok: true });
+});
+
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
@@ -1189,6 +1193,23 @@ const transporter = nodemailer.createTransport({
 });
 
 // временное хранилище незавершённых регистраций (для dev)
+function shouldSkipEmailVerification() {
+  if (process.env.DISABLE_EMAIL_VERIFICATION === "true") return true;
+
+  const host = String(process.env.SMTP_HOST || "").trim().toLowerCase();
+  const user = String(process.env.SMTP_USER || "").trim().toLowerCase();
+  const pass = String(process.env.SMTP_PASS || "").trim();
+
+  return (
+    !host ||
+    host === "smtp.example.com" ||
+    !user ||
+    user === "user@example.com" ||
+    !pass ||
+    pass === "change-me"
+  );
+}
+
 const pendingRegistrations = new Map();
 
 // ===================== ЛОГИН =====================
@@ -1258,6 +1279,7 @@ app.post("/api/login", (req, res) => {
 
 app.post("/api/register/start", (req, res) => {
   const { login, password, firstName, lastName, city, email, status, hours, phone} = req.body;
+  const cityValue = String(city || "").trim();
 
   if (!login || !password) {
     return res.status(400).json({
@@ -1273,11 +1295,15 @@ app.post("/api/register/start", (req, res) => {
     });
   }
 
-  if (!cityExists(city)) {
+  if (!cityValue) {
     return res.json({
       ok: false,
       message: "Город не найден в справочнике",
     });
+  }
+
+  if (!cityExists(cityValue)) {
+    console.warn("Unknown city during registration, allowing fallback:", cityValue);
   }
 
   db.get("SELECT id FROM users WHERE login = ?", [login], (err, row) => {
@@ -1304,10 +1330,36 @@ app.post("/api/register/start", (req, res) => {
       password,
       firstName,
       lastName,
-      city,
+      city: cityValue,
       email,
       status,
     };
+
+    if (shouldSkipEmailVerification()) {
+      const sql = `
+        INSERT INTO users
+          (login, password, first_name, last_name, city, email, status)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+      `;
+
+      db.run(
+        sql,
+        [login, password, firstName, lastName, cityValue, email, status],
+        function (insertErr) {
+          if (insertErr) {
+            console.error("DB error (insert user without email verification):", insertErr);
+            return res.status(500).json({
+              ok: false,
+              message: "Ошибка сервера при регистрации",
+            });
+          }
+
+          console.log(`Registration created without email verification for ${login}`);
+          return res.json({ ok: true, skipVerification: true });
+        }
+      );
+      return;
+    }
 
     pendingRegistrations.set(email, {
       code,

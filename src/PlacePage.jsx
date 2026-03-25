@@ -126,27 +126,6 @@ function buildGalleryImages(src) {
   return images;
 }
 
-function resolveMediaUrl(url) {
-  if (!url) return url;
-  if (url.startsWith("/photos/")) return `${API_BASE}${url}`;
-  return url;
-}
-
-function normalizePhoneForLink(phone) {
-  if (!phone) return null;
-  const cleaned = String(phone).replace(/[^\d+]/g, "");
-  return cleaned || null;
-}
-
-function hoursToLines(hours) {
-  if (!hours) return [];
-  return String(hours)
-    .replace(/\r/g, "\n")
-    .split("\n")
-    .map((line) => line.trim())
-    .filter(Boolean);
-}
-
 
 export default function PlacePage() {
   const { id } = useParams();
