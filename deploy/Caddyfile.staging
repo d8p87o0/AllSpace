@@ -1,0 +1,7 @@
+www.staging.allspace.com.ru {
+  redir https://staging.allspace.com.ru{uri} permanent
+}
+
+staging.allspace.com.ru {
+  reverse_proxy frontend:80
+}

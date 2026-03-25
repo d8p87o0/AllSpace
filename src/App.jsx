@@ -135,6 +135,12 @@ function shuffle(array) {
   return arr;
 }
 
+function wait(ms) {
+  return new Promise((resolve) => {
+    setTimeout(resolve, ms);
+  });
+}
+
 function ArticlesListPage({ articles, articlesLoading, articlesError, navigate }) {
   return (
     <>
@@ -322,12 +328,29 @@ function App() {
       setPlacesLoading(true);
       setPlacesError("");
       try {
-        const res = await fetch(`${API_BASE}/api/places`);
-        const data = await res.json();
-        if (!data.ok) {
-          throw new Error(data.message || "Не удалось загрузить места");
+        let lastError = null;
+
+        for (let attempt = 0; attempt < 5; attempt += 1) {
+          try {
+            const res = await fetch(`${API_BASE}/api/places`);
+            const data = await res.json();
+            if (!data.ok) {
+              throw new Error(data.message || "Не удалось загрузить места");
+            }
+            setPlaces(data.places || []);
+            lastError = null;
+            break;
+          } catch (error) {
+            lastError = error;
+            if (attempt < 4) {
+              await wait(1200);
+            }
+          }
         }
-        setPlaces(data.places || []);
+
+        if (lastError) {
+          throw lastError;
+        }
       } catch (e) {
         console.error("Ошибка загрузки мест:", e);
         setPlacesError("Не удалось загрузить места");

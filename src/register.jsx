@@ -191,7 +191,9 @@ function RegisterPage() {
 
       const data = await response.json();
 
-      if (data.ok) {
+      if (data.ok && data.skipVerification) {
+        navigate("/login");
+      } else if (data.ok) {
         // переходим на страницу ввода кода
         navigate("/verify-email", { state: { email: form.phone } });
       } else {

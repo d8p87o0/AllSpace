@@ -7,6 +7,8 @@
     "dev": "vite",
     "build": "node scripts/generate-sitemap.mjs && vite build",
     "lint": "eslint .",
+    "import:parsed-spb": "node scripts/import-parsed-spb.mjs",
+    "parse:kovorkingi-spb": "node scripts/parse-kovorkingi-spb.mjs",
     "preview": "vite preview",
     "server": "node server/server.js"
   },

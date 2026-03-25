@@ -11,7 +11,7 @@ import multer from "multer"; // 🔹 для загрузки файлов
 import nodemailer from "nodemailer";
 import dotenv from "dotenv";
 
-dotenv.config({ override: true });
+dotenv.config();
 
 const app = express();
 app.set("trust proxy", 1); // ✅ важно за nginx/https
@@ -53,6 +53,8 @@ const allowedOrigins = new Set([
   "http://127.0.0.1:5173",
   "https://allspace.com.ru",
   "https://www.allspace.com.ru",
+  "https://staging.allspace.com.ru",
+  "https://www.staging.allspace.com.ru",
 ]);
 const allowAllOrigins = process.env.CORS_ALLOW_ALL === "true";
 
@@ -68,6 +70,10 @@ app.use(
   })
 );
 app.use(express.json());
+
+app.get("/healthz", (_req, res) => {
+  res.json({ ok: true });
+});
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -660,6 +666,7 @@ function mapPlaceRow(row) {
     reviews: row.reviews,
     features,
     link: row.link,
+    description: row.description || null,
     hours: row.hours || null,
     phone: row.phone || null,
     moderation_status: row.moderation_status || "approved",
@@ -668,18 +675,29 @@ function mapPlaceRow(row) {
   };
 }
 
+function resolveAvatarUrl(avatarRaw, req) {
+  if (!avatarRaw) return null;
+
+  const s = String(avatarRaw).trim();
+  const host = req ? `${req.protocol}://${req.get("host")}` : "";
+  const avatarMatch = s.match(/^https?:\/\/[^/]+(\/avatars\/.*)$/i);
+
+  if (avatarMatch) return host ? `${host}${avatarMatch[1]}` : avatarMatch[1];
+  if (s.startsWith("/avatars/")) return host ? `${host}${s}` : s;
+  if (/^https?:\/\//i.test(s)) return s;
+  if (s.startsWith("/")) return host ? `${host}${s}` : s;
+
+  return host ? `${host}/avatars/${s}` : `/avatars/${s}`;
+}
+
 function mapReviewRow(row, req) {
   const createdAtSec = Number(row.created_at || 0);
   const createdAt = createdAtSec
     ? new Date(createdAtSec * 1000).toISOString()
     : new Date().toISOString();
 
-  const host = req ? `${req.protocol}://${req.get("host")}` : "";
   const avatarRaw = row.user_avatar || null;
-
-  const userAvatar = avatarRaw
-    ? (String(avatarRaw).startsWith("http") ? avatarRaw : `${host}${avatarRaw}`)
-    : null;
+  const userAvatar = resolveAvatarUrl(avatarRaw, req);
 
   const normalizeReviewMedia = (url) => {
     if (!url) return null;
@@ -774,11 +792,8 @@ function mapArticleRow(row, req) {
     content = [];
   }
 
-  const host = req ? `${req.protocol}://${req.get("host")}` : "";
-
   const normalizeAvatar = (avatarRaw) => {
-    if (!avatarRaw) return null;
-    return String(avatarRaw).startsWith("http") ? avatarRaw : `${host}${avatarRaw}`;
+    return resolveAvatarUrl(avatarRaw, req);
   };
 
   const createdAtSec = Number(row.created_at || 0);
@@ -832,12 +847,8 @@ function mapArticleCommentRow(row, req) {
     ? new Date(createdAtSec * 1000).toISOString()
     : new Date().toISOString();
 
-  const host = req ? `${req.protocol}://${req.get("host")}` : "";
   const avatarRaw = row.user_avatar || null;
-
-  const userAvatar = avatarRaw
-    ? (String(avatarRaw).startsWith("http") ? avatarRaw : `${host}${avatarRaw}`)
-    : null;
+  const userAvatar = resolveAvatarUrl(avatarRaw, req);
 
   return {
     id: row.id,
@@ -943,6 +954,23 @@ const transporter = nodemailer.createTransport({
   },
 });
 
+function shouldSkipEmailVerification() {
+  if (process.env.DISABLE_EMAIL_VERIFICATION === "true") return true;
+
+  const host = String(process.env.SMTP_HOST || "").trim().toLowerCase();
+  const user = String(process.env.SMTP_USER || "").trim().toLowerCase();
+  const pass = String(process.env.SMTP_PASS || "").trim();
+
+  return (
+    !host ||
+    host === "smtp.example.com" ||
+    !user ||
+    user === "user@example.com" ||
+    !pass ||
+    pass === "change-me"
+  );
+}
+
 // временное хранилище незавершённых регистраций (для dev)
 const pendingRegistrations = new Map();
 
@@ -964,7 +992,7 @@ app.post("/api/login", (req, res) => {
       login,
       first_name,
       last_name,
-      city,
+      city: cityValue,
       email,
       status,
       avatar
@@ -988,8 +1016,6 @@ app.post("/api/login", (req, res) => {
       });
     }
 
-    const host = `${req.protocol}://${req.get("host")}`;
-
     const user = {
       id: row.id,
       login: row.login,
@@ -998,7 +1024,7 @@ app.post("/api/login", (req, res) => {
       city: row.city,
       email: row.email,
       status: row.status,
-      avatar: row.avatar ? (row.avatar.startsWith("http") ? row.avatar : `${host}${row.avatar}`) : null,
+      avatar: resolveAvatarUrl(row.avatar, req),
     };
 
     return res.json({
@@ -1012,7 +1038,8 @@ app.post("/api/login", (req, res) => {
 // ===================== РЕГИСТРАЦИЯ: ШАГ 1 =====================
 
 app.post("/api/register/start", (req, res) => {
-  const { login, password, firstName, lastName, city, email, status, hours, phone} = req.body;
+  const { login, password, firstName, lastName, city, email, status } = req.body;
+  const cityValue = String(city || "").trim();
 
   if (!login || !password) {
     return res.status(400).json({
@@ -1028,7 +1055,7 @@ app.post("/api/register/start", (req, res) => {
     });
   }
 
-  if (!cityExists(city)) {
+  if (!cityValue) {
     return res.json({
       ok: false,
       message: "Город не найден в справочнике",
@@ -1059,10 +1086,36 @@ app.post("/api/register/start", (req, res) => {
       password,
       firstName,
       lastName,
-      city,
+      city: cityValue,
       email,
       status,
     };
+
+    if (shouldSkipEmailVerification()) {
+      const sql = `
+        INSERT INTO users
+          (login, password, first_name, last_name, city, email, status)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+      `;
+
+      db.run(
+        sql,
+        [login, password, firstName, lastName, cityValue, email, status],
+        function (insertErr) {
+          if (insertErr) {
+            console.error("DB error (insert user without email verification):", insertErr);
+            return res.status(500).json({
+              ok: false,
+              message: "Ошибка сервера при регистрации",
+            });
+          }
+
+          console.log(`Registration created without email verification for ${login}`);
+          return res.json({ ok: true, skipVerification: true });
+        }
+      );
+      return;
+    }
 
     pendingRegistrations.set(email, {
       code,
@@ -1195,7 +1248,6 @@ app.get("/api/users/by-login/:login", (req, res) => {
     }
     if (!row) return res.status(404).json({ ok: false, message: "User not found" });
 
-    const host = `${req.protocol}://${req.get("host")}`;
     return res.json({
       ok: true,
       user: {
@@ -1206,7 +1258,7 @@ app.get("/api/users/by-login/:login", (req, res) => {
         city: row.city,
         email: row.email,
         status: row.status,
-        avatar: row.avatar ? (row.avatar.startsWith("http") ? row.avatar : `${host}${row.avatar}`) : null,
+        avatar: resolveAvatarUrl(row.avatar, req),
       },
     });
   });
@@ -1293,7 +1345,7 @@ app.put("/api/users/:id", (req, res) => {
             city: row.city,
             email: row.email,
             status: row.status,
-            avatar: row.avatar ? (row.avatar.startsWith("http") ? row.avatar : `${host}${row.avatar}`) : null,
+            avatar: resolveAvatarUrl(row.avatar, req),
           },
         });
       });
@@ -1371,7 +1423,7 @@ app.get("/api/places", (req, res) => {
 app.post("/api/places", (req, res) => {
   const {
     name, type, city, address, image, images, badge, rating, reviews, features, link,
-    hours, phone, 
+    description, hours, phone,
   } = req.body;
 
   const nameValue = (name || "").trim();
@@ -1422,8 +1474,8 @@ app.post("/api/places", (req, res) => {
 
   const sql = `
     INSERT INTO places
-      (name, type, city, address, image, images, badge, rating, reviews, features, link, hours, phone, moderation_status, submitted_by, submitted_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      (name, type, city, address, image, images, badge, rating, reviews, features, link, description, hours, phone, moderation_status, submitted_by, submitted_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `;
 
   db.run(
@@ -1440,6 +1492,7 @@ app.post("/api/places", (req, res) => {
       reviews ?? null,
       featuresJson,
       link || null,
+      description || null,
       hours || null,
       phone || null,
       moderationStatus,
@@ -1492,7 +1545,7 @@ app.put("/api/places/:id", (req, res) => {
 
   const {
     name, type, city, address, image, images, badge, rating, reviews, features, link,
-    hours, phone, 
+    description, hours, phone,
   } = req.body;
 
   if (!name || !name.trim()) {
@@ -1519,6 +1572,7 @@ app.put("/api/places/:id", (req, res) => {
       reviews = ?,
       features = ?,
       link = ?,
+      description = ?,
       hours = ?,
       phone = ?
     WHERE id = ?
@@ -1538,6 +1592,7 @@ app.put("/api/places/:id", (req, res) => {
       reviews ?? null,
       featuresJson,
       link || null,
+      description || null,
       hours || null,
       phone || null,
       id,

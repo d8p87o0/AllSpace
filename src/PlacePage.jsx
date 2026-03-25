@@ -8,26 +8,7 @@ const API_BASE =
   (import.meta.env.PROD ? "" : "http://localhost:3001");
 const FAVORITES_PREFIX = "favoritePlaces_";
 const REVIEW_IMAGES_LIMIT = 6;
-// Доп. описание и особенности для мест
 
-const PLACE_DETAILS = {
-  1: {
-    description:
-      "Уютное кафе в центре города с отличным кофе и комфортной атмосферой для работы. Просторный зал, много розеток, быстрый Wi-Fi. Идеально подходит для фрилансеров и удалённых сотрудников.",
-    wifi: "100 Мбит/с, стабильное подключение",
-    noise: "Тихо · 4.5/5",
-    sockets: "Розетки у каждого столика",
-    avgCheck: "300–500 ₽",
-  },
-  default: {
-    description:
-      "Уютное место для работы и встреч. Есть Wi-Fi, розетки и комфортная атмосфера.",
-    wifi: "Быстрый Wi-Fi",
-    noise: "Средний уровень шума",
-    sockets: "Розетки в зале",
-    avgCheck: "Средний чек 300–700 ₽",
-  },
-};
 // Краткие описания и иконки для фич из БД
 const FEATURE_CONFIG = {
   "расположение": {
@@ -77,6 +58,27 @@ function getInitials(name) {
   const first = parts[0]?.[0] || "";
   const second = parts[1]?.[0] || "";
   return (first + second).toUpperCase();
+}
+
+function resolveMediaUrl(url) {
+  if (!url) return url;
+  if (url.startsWith("/photos/")) return `${API_BASE}${url}`;
+  return url;
+}
+
+function normalizePhoneForLink(phone) {
+  if (!phone) return null;
+  const cleaned = String(phone).replace(/[^\d+]/g, "");
+  return cleaned || null;
+}
+
+function hoursToLines(hours) {
+  if (!hours) return [];
+  return String(hours)
+    .replace(/\r/g, "\n")
+    .split("\n")
+    .map((line) => line.trim())
+    .filter(Boolean);
 }
 
 function isSameUser(review, currentUser) {
@@ -376,29 +378,6 @@ export default function PlacePage() {
       }
     };
 
-    function resolveMediaUrl(url) {
-      if (!url) return url;
-      // если URL начинается с /photos/... — это лежит на API , а не на Vite (5173)
-      if (url.startsWith("/photos/")) return `${API_BASE}${url}`;
-      return url;
-    }
-    
-    function normalizePhoneForLink(phone) {
-      if (!phone) return null;
-      // оставим + и цифры
-      const cleaned = String(phone).replace(/[^\d+]/g, "");
-      return cleaned || null;
-    }
-    
-    function hoursToLines(hours) {
-      if (!hours) return [];
-      return String(hours)
-        .replace(/\r/g, "\n")
-        .split("\n")
-        .map((l) => l.trim())
-        .filter(Boolean);
-    }
-
     // 1) Если у места есть images из БД — используем их
     if (Array.isArray(place.images) && place.images.length) {
       setGalleryImages(place.images);
@@ -442,8 +421,6 @@ export default function PlacePage() {
       </section>
     );
   }
-
-  const details = PLACE_DETAILS[placeId] || PLACE_DETAILS.default;
 
   const mainImage = resolveMediaUrl(
     galleryImages[activeIndex] || galleryImages[0] || place.image
@@ -993,7 +970,7 @@ export default function PlacePage() {
   : "Место для работы — ALLSPACE";
 
   const placeDescription =
-    details?.description ||
+    place?.description ||
     `Подборка информации о месте ${place?.name || ""}: адрес, фото, отзывы, удобства и маршрут.`;
 
   const rawPlaceImage =
@@ -1148,7 +1125,7 @@ export default function PlacePage() {
                 </div>
 
                 <p className="place-page__description">
-                  {details.description}
+                  {place.description || "Описание места пока не добавлено."}
                 </p>
               </div>
 
