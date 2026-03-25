@@ -712,6 +712,7 @@ function mapPlaceRow(row) {
     reviews: row.reviews,
     features,
     link: row.link,
+    description: row.description || null,
     hours: row.hours || null,
     phone: row.phone || null,
     moderation_status: row.moderation_status || "approved",
