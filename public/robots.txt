@@ -9,4 +9,4 @@ Disallow: /profile
 Disallow: /submit-place
 Disallow: /submit-article
 
-Sitemap: https://allspace.ru/sitemap.xml
+Sitemap: https://allspace.com.ru/sitemap.xml

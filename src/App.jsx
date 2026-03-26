@@ -119,6 +119,89 @@ const CITIES = [
   { id: "vladivostok", name: "Владивосток", top: "86.8%", left: "86.8%" },
 ];
 
+const CITY_MAP_CENTERS = {
+  "Москва": [55.755864, 37.617698],
+  "Санкт-Петербург": [59.938955, 30.315644],
+  "Иваново": [57.000348, 40.973921],
+};
+
+const GOLDEN_ANGLE = Math.PI * (3 - Math.sqrt(5));
+const ROUTE_MAP_ZOOM_MARGIN = [56, 56, 56, 56];
+
+function parseCoordinate(value) {
+  const numeric = Number(value);
+  return Number.isFinite(numeric) ? numeric : null;
+}
+
+function escapeHtml(value) {
+  return String(value ?? "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
+function buildFallbackCoordinates(center, index) {
+  if (!Array.isArray(center) || center.length !== 2) return null;
+
+  const [baseLat, baseLon] = center;
+  if (index <= 0) return center;
+
+  const radius = 0.01 + Math.sqrt(index) * 0.0085;
+  const angle = index * GOLDEN_ANGLE;
+  const latOffset = Math.sin(angle) * radius;
+  const lonOffset =
+    (Math.cos(angle) * radius) / Math.max(Math.cos((baseLat * Math.PI) / 180), 0.35);
+
+  return [baseLat + latOffset, baseLon + lonOffset];
+}
+
+function buildRouteMapBalloon(place) {
+  const title = escapeHtml(place.name || "Место");
+  const type = escapeHtml(place.type || "Место");
+  const city = escapeHtml(place.city || "");
+  const address = escapeHtml(place.address || "");
+  const href = `/place/${place.id}`;
+
+  return `
+    <div class="route-map-balloon">
+      <div class="route-map-balloon__title">${title}</div>
+      <div class="route-map-balloon__meta">${type}${city ? `, ${city}` : ""}</div>
+      ${address ? `<div class="route-map-balloon__address">${address}</div>` : ""}
+      <a class="route-map-balloon__link" href="${href}">Открыть карточку</a>
+    </div>
+  `;
+}
+
+function getPlaceMarkerClass(type, isFallback = false) {
+  const normalizedType = String(type || "").toLowerCase();
+  let markerClass = "route-map-marker--default";
+
+  if (normalizedType.includes("коф")) markerClass = "route-map-marker--coffee";
+  else if (normalizedType.includes("библи")) markerClass = "route-map-marker--library";
+  else if (normalizedType.includes("бар")) markerClass = "route-map-marker--bar";
+  else if (normalizedType.includes("антикаф")) markerClass = "route-map-marker--anticafe";
+  else if (normalizedType.includes("коворк")) markerClass = "route-map-marker--coworking";
+
+  if (isFallback) {
+    markerClass += " route-map-marker--fallback";
+  }
+
+  return markerClass;
+}
+
+function getRouteMapMarkerScale(zoom) {
+  if (zoom <= 4) return 0.58;
+  if (zoom <= 5) return 0.66;
+  if (zoom <= 6) return 0.76;
+  if (zoom <= 7) return 0.88;
+  if (zoom <= 8) return 0.98;
+  if (zoom <= 9) return 1.08;
+  if (zoom <= 10) return 1.16;
+  return 1.24;
+}
+
 const PAGE_SIZE = 9;
 const HOME_ARTICLES_LIMIT = 6;
 const SHOW_MORE_ARTICLES_THRESHOLD = 9;
@@ -238,6 +321,7 @@ function ArticlesListPage({ articles, articlesLoading, articlesError, navigate }
 function App() {
   const navigate = useNavigate();
   const location = useLocation();
+  const routeMapInstanceRef = useRef(null);
 
   const sendSessionEnd = () => {
     try {
@@ -309,6 +393,45 @@ function App() {
   const [places, setPlaces] = useState([]);
   const [placesLoading, setPlacesLoading] = useState(true);
   const [placesError, setPlacesError] = useState("");
+
+  const routeMapPlaces = useMemo(() => {
+    if (!Array.isArray(places) || !places.length) return [];
+
+    const fallbackIndexes = new Map();
+
+    return [...places]
+      .sort((a, b) => Number(a.id || 0) - Number(b.id || 0))
+      .map((place) => {
+        const latitude = parseCoordinate(place.latitude);
+        const longitude = parseCoordinate(place.longitude);
+
+        if (latitude !== null && longitude !== null) {
+          return {
+            ...place,
+            mapLatitude: latitude,
+            mapLongitude: longitude,
+            isFallbackCoordinate: false,
+          };
+        }
+
+        const cityCenter = CITY_MAP_CENTERS[place.city];
+        if (!cityCenter) return null;
+
+        const index = fallbackIndexes.get(place.city) || 0;
+        fallbackIndexes.set(place.city, index + 1);
+
+        const fallbackCoordinates = buildFallbackCoordinates(cityCenter, index);
+        if (!fallbackCoordinates) return null;
+
+        return {
+          ...place,
+          mapLatitude: fallbackCoordinates[0],
+          mapLongitude: fallbackCoordinates[1],
+          isFallbackCoordinate: true,
+        };
+      })
+      .filter(Boolean);
+  }, [places]);
   
   useEffect(() => {
     try {
@@ -856,41 +979,101 @@ useEffect(() => {
     });
   };
 
-  // --- Яндекс-карта ---
+  // --- Яндекс-карта на главной ---
   useEffect(() => {
-    if (typeof window === "undefined") return;
+    if (typeof window === "undefined" || location.pathname !== "/") return undefined;
+    if (placesLoading || !routeMapPlaces.length) return undefined;
+
+    document
+      .querySelectorAll('link[data-yandex-glyphicons="true"], link[href*="bootstrap/3.3.4/css/bootstrap.min.css"]')
+      .forEach((node) => node.remove());
+
+    let cancelled = false;
+    let existingScriptLoadHandler = null;
 
     const initMap = () => {
-      if (!window.ymaps) return;
+      if (cancelled || !window.ymaps) return;
       const container = document.getElementById("yandex-map");
       if (!container) return;
 
-      if (container.dataset.inited === "true") return;
-      container.dataset.inited = "true";
+      if (routeMapInstanceRef.current) {
+        routeMapInstanceRef.current.destroy();
+        routeMapInstanceRef.current = null;
+      }
 
-      const map = new window.ymaps.Map("yandex-map", {
-        center: [55.751244, 37.618423],
-        zoom: 11,
-        controls: ["zoomControl", "geolocationControl"],
+      const map = new window.ymaps.Map(container, {
+        center: [57.5, 37.6],
+        zoom: 5,
+        controls: ["zoomControl", "fullscreenControl"],
       });
+      routeMapInstanceRef.current = map;
 
-      const placemark = new window.ymaps.Placemark(
-        [55.751244, 37.618423],
-        {
-          hintContent: "Рабочее место мечты",
-          balloonContent: "Пример точки на карте",
-        },
-        {
-          preset: "islands#greenIcon",
-        }
+      const markerLayout = window.ymaps.templateLayoutFactory.createClass(
+        '<div class="route-map-marker {{ properties.markerClass }}"><span class="route-map-marker__icon"></span></div>'
       );
 
-      map.geoObjects.add(placemark);
+      const updateMarkerScale = () => {
+        container.style.setProperty(
+          "--route-map-marker-scale",
+          String(getRouteMapMarkerScale(map.getZoom()))
+        );
+      };
+
+      const geoObjects = new window.ymaps.GeoObjectCollection();
+
+      routeMapPlaces.forEach((place) => {
+        const placemark = new window.ymaps.Placemark(
+          [place.mapLatitude, place.mapLongitude],
+          {
+            hintContent: escapeHtml(place.name || "Место"),
+            balloonContentBody: buildRouteMapBalloon(place),
+            markerClass: getPlaceMarkerClass(place.type, place.isFallbackCoordinate),
+          },
+          {
+            iconLayout: markerLayout,
+            iconOffset: [-12, -30],
+            iconShape: {
+              type: "Circle",
+              coordinates: [12, 14],
+              radius: 12,
+            },
+          }
+        );
+
+        geoObjects.add(placemark);
+      });
+
+      map.geoObjects.add(geoObjects);
+      updateMarkerScale();
+      map.events.add("boundschange", updateMarkerScale);
+
+      if (routeMapPlaces.length === 1) {
+        const [place] = routeMapPlaces;
+        map.setCenter([place.mapLatitude, place.mapLongitude], 13, {
+          duration: 250,
+        });
+        return;
+      }
+
+      const bounds = geoObjects.getBounds();
+      if (bounds) {
+        map.setBounds(bounds, {
+          checkZoomRange: true,
+          zoomMargin: ROUTE_MAP_ZOOM_MARGIN,
+          duration: 250,
+        });
+      }
     };
 
     if (window.ymaps) {
       window.ymaps.ready(initMap);
-      return;
+      return () => {
+        cancelled = true;
+        if (routeMapInstanceRef.current) {
+          routeMapInstanceRef.current.destroy();
+          routeMapInstanceRef.current = null;
+        }
+      };
     }
 
     const existingScript = document.querySelector(
@@ -898,16 +1081,34 @@ useEffect(() => {
     );
 
     if (existingScript) {
-      existingScript.addEventListener("load", () => window.ymaps.ready(initMap));
-      return;
+      existingScriptLoadHandler = () => window.ymaps?.ready(initMap);
+      existingScript.addEventListener("load", existingScriptLoadHandler);
+      return () => {
+        cancelled = true;
+        if (existingScriptLoadHandler) {
+          existingScript.removeEventListener("load", existingScriptLoadHandler);
+        }
+        if (routeMapInstanceRef.current) {
+          routeMapInstanceRef.current.destroy();
+          routeMapInstanceRef.current = null;
+        }
+      };
     }
 
     const script = document.createElement("script");
     script.src = "https://api-maps.yandex.ru/2.1/?lang=ru_RU";
     script.async = true;
-    script.onload = () => window.ymaps.ready(initMap);
+    script.onload = () => window.ymaps?.ready(initMap);
     document.body.appendChild(script);
-  }, []);
+
+    return () => {
+      cancelled = true;
+      if (routeMapInstanceRef.current) {
+        routeMapInstanceRef.current.destroy();
+        routeMapInstanceRef.current = null;
+      }
+    };
+  }, [location.pathname, placesLoading, routeMapPlaces]);
 
     // ======= ARTICLES (approved) =======
     const [articles, setArticles] = useState([]);
@@ -1597,8 +1798,12 @@ useEffect(() => {
                 <section className="route-map">
                   <div className="route-map__inner">
                     <h2 className="route-map__title bicubik-title">
-                      Построй маршрут к рабочему месту мечты
+                      Все места на одной карте
                     </h2>
+                    <p className="route-map__subtitle">
+                      На карте отмечены все локации, которые уже есть на сайте:{" "}
+                      {routeMapPlaces.length}
+                    </p>
 
                     <div className="route-map__map-wrapper">
                       <div id="yandex-map" className="route-map__map" />

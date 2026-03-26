@@ -1,6 +1,6 @@
 import { Helmet } from "react-helmet-async";
 
-export const SEO_SITE_URL = "https://allspace.ru";
+export const SEO_SITE_URL = "https://allspace.com.ru";
 
 const DEFAULT_TITLE =
   "ALLSPACE — места для работы: кафе, коворкинги и библиотеки";

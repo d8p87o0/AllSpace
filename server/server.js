@@ -322,6 +322,8 @@ db.serialize(() => {
       reviews INTEGER,
       features TEXT, -- JSON-строка с массивом фич
       link TEXT,
+      latitude REAL,
+      longitude REAL,
       description TEXT,
       hours TEXT,
       phone TEXT,
@@ -499,6 +501,20 @@ db.serialize(() => {
       db.run("ALTER TABLE places ADD COLUMN description TEXT", (e) => {
         if (e) console.error("Ошибка добавления description в places:", e);
         else console.log("Столбец description добавлен в таблицу places");
+      });
+    }
+
+    if (!colNames.has("latitude")) {
+      db.run("ALTER TABLE places ADD COLUMN latitude REAL", (e) => {
+        if (e) console.error("DB error (add latitude to places):", e);
+        else console.log("Column latitude added to places");
+      });
+    }
+
+    if (!colNames.has("longitude")) {
+      db.run("ALTER TABLE places ADD COLUMN longitude REAL", (e) => {
+        if (e) console.error("DB error (add longitude to places):", e);
+        else console.log("Column longitude added to places");
       });
     }
 
@@ -716,6 +732,8 @@ function mapPlaceRow(row) {
     reviews: row.reviews,
     features,
     link: row.link,
+    latitude: row.latitude ?? null,
+    longitude: row.longitude ?? null,
     description: row.description || null,
     hours: row.hours || null,
     phone: row.phone || null,
@@ -873,6 +891,98 @@ function dbAllAsync(sql, params = []) {
       resolve(rows || []);
     });
   });
+}
+
+const GEOCODER_USER_AGENT = "AllSpaceServerGeocoder/1.0";
+
+function parseFiniteCoordinate(value) {
+  const numeric = Number(value);
+  return Number.isFinite(numeric) ? numeric : null;
+}
+
+function parseCoordinatesFromLink(link) {
+  const rawLink = typeof link === "string" ? link.trim() : "";
+  if (!rawLink) return null;
+
+  try {
+    const url = new URL(rawLink);
+    const ptValue = url.searchParams.get("pt");
+    if (ptValue) {
+      const [lonRaw, latRaw] = String(ptValue).split(",");
+      const latitude = parseFiniteCoordinate(latRaw);
+      const longitude = parseFiniteCoordinate(lonRaw);
+      if (latitude !== null && longitude !== null) {
+        return { latitude, longitude };
+      }
+    }
+
+    const llValue = url.searchParams.get("ll");
+    if (llValue) {
+      const [lonRaw, latRaw] = String(llValue).split(",");
+      const latitude = parseFiniteCoordinate(latRaw);
+      const longitude = parseFiniteCoordinate(lonRaw);
+      if (latitude !== null && longitude !== null) {
+        return { latitude, longitude };
+      }
+    }
+  } catch {
+    return null;
+  }
+
+  return null;
+}
+
+function normalizeGeocodeAddress(address = "") {
+  return String(address || "")
+    .replace(/\s+/g, " ")
+    .replace(/\s+,/g, ",")
+    .replace(/,+/g, ",")
+    .replace(/,\s*,/g, ",")
+    .replace(/,\s*$/g, "")
+    .trim();
+}
+
+async function geocodeByAddress({ city, address }) {
+  const normalizedAddress = normalizeGeocodeAddress(address);
+  const normalizedCity = String(city || "").trim();
+  const query = [normalizedAddress, normalizedCity, "Россия"].filter(Boolean).join(", ");
+  if (!query) return null;
+
+  const url =
+    "https://nominatim.openstreetmap.org/search?format=jsonv2&limit=1&countrycodes=ru&q=" +
+    encodeURIComponent(query);
+
+  try {
+    const res = await fetch(url, {
+      headers: {
+        "User-Agent": GEOCODER_USER_AGENT,
+        Accept: "application/json",
+      },
+    });
+
+    if (!res.ok) {
+      return null;
+    }
+
+    const data = await res.json();
+    const first = Array.isArray(data) ? data[0] : null;
+    if (!first) return null;
+
+    const latitude = parseFiniteCoordinate(first.lat);
+    const longitude = parseFiniteCoordinate(first.lon);
+    if (latitude === null || longitude === null) {
+      return null;
+    }
+
+    return { latitude, longitude };
+  } catch (error) {
+    console.error("Geocode request failed:", error.message);
+    return null;
+  }
+}
+
+async function resolvePlaceCoordinates({ city, address, link }) {
+  return parseCoordinatesFromLink(link) || (await geocodeByAddress({ city, address })) || null;
 }
 
 async function withTransaction(task) {
@@ -1722,14 +1832,19 @@ app.post("/api/places", async (req, res) => {
     const moderationStatus = submittedBy ? "pending" : "approved";
     const submittedAt = submittedBy ? Math.floor(Date.now() / 1000) : null;
     const requestedOrder = parseDisplayOrder(displayOrder);
+    const coordinates = await resolvePlaceCoordinates({
+      city: cityValue,
+      address: addressValue,
+      link,
+    });
 
     const featuresJson = JSON.stringify(Array.isArray(features) ? features : []);
     const imagesJson = JSON.stringify(imagesArr);
 
     const sql = `
       INSERT INTO places
-        (name, type, city, address, display_order, image, images, badge, rating, reviews, features, link, description, hours, phone, moderation_status, submitted_by, submitted_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        (name, type, city, address, display_order, image, images, badge, rating, reviews, features, link, latitude, longitude, description, hours, phone, moderation_status, submitted_by, submitted_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `;
 
     try {
@@ -1750,6 +1865,8 @@ app.post("/api/places", async (req, res) => {
           reviews ?? null,
           featuresJson,
           link || null,
+          coordinates?.latitude ?? null,
+          coordinates?.longitude ?? null,
           description || null,
           hours || null,
           phone || null,
@@ -1817,6 +1934,11 @@ app.put("/api/places/:id", async (req, res) => {
     const featuresJson = JSON.stringify(Array.isArray(features) ? features : []);
     const imagesJson = JSON.stringify(Array.isArray(images) ? images : []);
     const requestedOrder = parseDisplayOrder(displayOrder);
+    const coordinates = await resolvePlaceCoordinates({
+      city,
+      address,
+      link,
+    });
 
     const sql = `
       UPDATE places
@@ -1833,6 +1955,8 @@ app.put("/api/places/:id", async (req, res) => {
         reviews = ?,
         features = ?,
         link = ?,
+        latitude = ?,
+        longitude = ?,
         description = ?,
         hours = ?,
         phone = ?
@@ -1865,6 +1989,8 @@ app.put("/api/places/:id", async (req, res) => {
           reviews ?? null,
           featuresJson,
           link || null,
+          coordinates?.latitude ?? existing.latitude ?? null,
+          coordinates?.longitude ?? existing.longitude ?? null,
           description || null,
           hours || null,
           phone || null,
@@ -1904,26 +2030,43 @@ app.put("/api/places/:id", async (req, res) => {
 });
 
 // Одобрить место (модерация)
-app.post("/api/places/:id/approve", (req, res) => {
+app.post("/api/places/:id/approve", async (req, res) => {
   const id = Number(req.params.id);
   if (!Number.isInteger(id)) {
     return res.status(400).json({ ok: false, message: "Invalid id" });
   }
 
-  db.run(
-    "UPDATE places SET moderation_status = 'approved' WHERE id = ?",
-    [id],
-    function (err) {
-      if (err) {
-        console.error("DB error (approve place):", err);
-        return res.status(500).json({ ok: false, message: "DB error" });
-      }
-      if (this.changes === 0) {
-        return res.status(404).json({ ok: false, message: "Place not found" });
-      }
-      return res.json({ ok: true });
+  try {
+    const row = await dbGetAsync("SELECT * FROM places WHERE id = ?", [id]);
+    if (!row) {
+      return res.status(404).json({ ok: false, message: "Place not found" });
     }
-  );
+
+    const hasCoordinates =
+      parseFiniteCoordinate(row.latitude) !== null &&
+      parseFiniteCoordinate(row.longitude) !== null;
+
+    const coordinates = hasCoordinates
+      ? {
+          latitude: parseFiniteCoordinate(row.latitude),
+          longitude: parseFiniteCoordinate(row.longitude),
+        }
+      : await resolvePlaceCoordinates({
+          city: row.city,
+          address: row.address,
+          link: row.link,
+        });
+
+    await dbRunAsync(
+      "UPDATE places SET moderation_status = 'approved', latitude = ?, longitude = ? WHERE id = ?",
+      [coordinates?.latitude ?? row.latitude ?? null, coordinates?.longitude ?? row.longitude ?? null, id]
+    );
+
+    return res.json({ ok: true });
+  } catch (err) {
+    console.error("DB error (approve place):", err);
+    return res.status(500).json({ ok: false, message: "DB error" });
+  }
 });
 
 // Отклонить место (модерация)

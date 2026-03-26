@@ -26,7 +26,7 @@ const photosRoot = path.resolve(__dirname, "photos");
 const PHOTO_BASE = (
   process.env.PHOTO_BASE ||
   process.env.PUBLIC_BASE_URL ||
-  "https://staging.allspace.com.ru"
+  "https://allspace.com.ru"
 ).replace(/\/$/, "");
 
 function dbAll(db, sql, params = []) {

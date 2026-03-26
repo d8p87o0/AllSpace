@@ -85,6 +85,22 @@ function uniq(values) {
   return [...new Set(values.filter(Boolean))];
 }
 
+function buildLocationQuery(address, city) {
+  const safeAddress = normalizeWhitespace(address);
+  const safeCity = normalizeWhitespace(city);
+
+  if (!safeAddress) return safeCity || "";
+  if (!safeCity) return safeAddress;
+  if (safeAddress.toLowerCase().includes(safeCity.toLowerCase())) return safeAddress;
+
+  return `${safeAddress}, ${safeCity}`;
+}
+
+function buildYandexMapsUrl(address, city) {
+  const query = buildLocationQuery(address, city);
+  return query ? `https://yandex.ru/maps/?text=${encodeURIComponent(query)}` : null;
+}
+
 function cleanName(rawName) {
   const name = normalizeWhitespace(rawName);
   return name
@@ -386,6 +402,7 @@ function toPlaceRecord(pageUrl, html) {
   const name = extractName(html, lines);
   const description = extractDescription(lines, name);
   const images = extractImageUrls(html, pageUrl);
+  const address = extractAddress(lines);
 
   if (!name || !description || images.length === 0) {
     return null;
@@ -395,14 +412,14 @@ function toPlaceRecord(pageUrl, html) {
     name,
     type: "Коворкинг",
     city: CITY_NAME,
-    address: extractAddress(lines),
+    address,
     image: images[0],
     images,
     badge: null,
     rating: extractRating(lines),
     reviews: extractReviewsCount(lines),
     features: extractFeatures(lines),
-    link: pageUrl,
+    link: buildYandexMapsUrl(address, CITY_NAME),
     sourceUrl: pageUrl,
     description,
     hours: extractHours(lines),

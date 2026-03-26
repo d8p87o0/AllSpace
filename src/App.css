@@ -650,6 +650,13 @@
   font-weight: 900;
 }
 
+.route-map__subtitle {
+  margin: 0 0 32px;
+  font-size: 18px;
+  line-height: 1.5;
+  color: rgba(255, 255, 255, 0.84);
+}
+
 .route-map__map-wrapper {
   border-radius: 24px;
   overflow: hidden;
@@ -660,6 +667,103 @@
 .route-map__map {
   width: 100%;
   min-height: 420px;
+  --route-map-marker-scale: 0.58;
+}
+
+.route-map-balloon {
+  min-width: 220px;
+  max-width: 280px;
+  font-family: inherit;
+  color: #111827;
+  line-height: 1.45;
+}
+
+.route-map-balloon__title {
+  font-size: 16px;
+  font-weight: 800;
+  margin-bottom: 4px;
+}
+
+.route-map-balloon__meta {
+  font-size: 13px;
+  color: #4b5563;
+  margin-bottom: 8px;
+}
+
+.route-map-balloon__address {
+  font-size: 13px;
+  color: #111827;
+  margin-bottom: 10px;
+}
+
+.route-map-balloon__link {
+  color: #0f8a1d;
+  font-size: 13px;
+  font-weight: 700;
+  text-decoration: none;
+}
+
+.route-map-balloon__link:hover {
+  text-decoration: underline;
+}
+
+.route-map-marker {
+  position: relative;
+  width: 24px;
+  height: 30px;
+  transform: scale(var(--route-map-marker-scale));
+  transform-origin: 50% 100%;
+  will-change: transform;
+  cursor: pointer;
+}
+
+.route-map-marker::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: center / contain no-repeat
+    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 36 46'%3E%3Cpath fill='%2319aa1e' d='M18 0C8.2 0 .5 7.7.5 17.3c0 12.4 15.6 27.4 16.3 28.1a1.8 1.8 0 0 0 2.4 0c.7-.7 16.3-15.7 16.3-28.1C35.5 7.7 27.8 0 18 0Z'/%3E%3C/svg%3E");
+}
+
+.route-map-marker__icon {
+  position: absolute;
+  left: 50%;
+  top: 6px;
+  width: 10px;
+  height: 10px;
+  transform: translateX(-50%);
+  background-color: #ffffff;
+  -webkit-mask: var(--route-map-marker-icon) center / contain no-repeat;
+  mask: var(--route-map-marker-icon) center / contain no-repeat;
+}
+
+.route-map-marker--fallback {
+  opacity: 0.72;
+  filter: saturate(0.25);
+}
+
+.route-map-marker--coffee {
+  --route-map-marker-icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath fill='%23000' d='M4 6h12v2h2a3 3 0 0 1 0 6h-1.2A5 5 0 0 1 12 18H8a5 5 0 0 1-5-5V6Zm12 6h2a1 1 0 1 0 0-2h-2v2ZM6 20h12v2H6v-2Z'/%3E%3C/svg%3E");
+}
+
+.route-map-marker--library {
+  --route-map-marker-icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath fill='%23000' d='M5 4.5A2.5 2.5 0 0 1 7.5 2H19v17h-1.5A2.5 2.5 0 0 0 15 21H7.5A2.5 2.5 0 0 1 5 18.5v-14ZM8 6h8v2H8V6Zm0 4h8v2H8v-2Zm0 4h6v2H8v-2Z'/%3E%3C/svg%3E");
+}
+
+.route-map-marker--bar {
+  --route-map-marker-icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath fill='%23000' d='M4 5h16l-6 7v5h3v2H7v-2h3v-5L4 5Zm4.3 2L12 11.3 15.7 7H8.3Z'/%3E%3C/svg%3E");
+}
+
+.route-map-marker--anticafe {
+  --route-map-marker-icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath fill='%23000' d='M12 2a10 10 0 1 1 0 20 10 10 0 0 1 0-20Zm1 5h-2v6l5 3 1-1.7-4-2.3V7Z'/%3E%3C/svg%3E");
+}
+
+.route-map-marker--coworking {
+  --route-map-marker-icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath fill='%23000' d='M8 4.5A2.5 2.5 0 0 1 10.5 2h3A2.5 2.5 0 0 1 16 4.5V5h3A2 2 0 0 1 21 7v10a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2h3v-.5ZM10 5h4v-.5a.5.5 0 0 0-.5-.5h-3a.5.5 0 0 0-.5.5V5Zm1 7h2v2h-2v-2Z'/%3E%3C/svg%3E");
+}
+
+.route-map-marker--default {
+  --route-map-marker-icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath fill='%23000' d='m12 3 2.6 5.3 5.9.9-4.2 4.1 1 5.8-5.3-2.8-5.3 2.8 1-5.8L3.5 9.2l5.9-.9L12 3Z'/%3E%3C/svg%3E");
 }
 
 /* адаптив для планшетов/мобилы */
@@ -674,6 +778,11 @@
     margin-bottom: 24px;
   }
 
+  .route-map__subtitle {
+    font-size: 15px;
+    margin-bottom: 24px;
+  }
+
   .route-map__map {
     min-height: 320px;
   }
@@ -682,6 +791,10 @@
 @media (max-width: 480px) {
   .route-map__title {
     font-size: 22px;
+  }
+
+  .route-map__subtitle {
+    font-size: 14px;
   }
 
   .route-map__map {
@@ -2161,6 +2274,13 @@
   height: 220px;
   border: 0;
   display: block;
+}
+
+.place-sidecard__map-canvas {
+  width: 100%;
+  height: 220px;
+  display: block;
+  --route-map-marker-scale: 0.64;
 }
 
 .place-sidecard__map-placeholder {

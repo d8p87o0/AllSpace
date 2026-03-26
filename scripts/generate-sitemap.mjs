@@ -1,7 +1,7 @@
 import fs from "fs/promises";
 
-const SITE_URL = "https://allspace.ru";
-const API_BASE = process.env.SITEMAP_API_BASE || "https://allspace.ru";
+const SITE_URL = "https://allspace.com.ru";
+const API_BASE = process.env.SITEMAP_API_BASE || "https://allspace.com.ru";
 
 async function fetchJson(url) {
   const res = await fetch(url);

@@ -1,5 +1,5 @@
 ﻿// src/PlacePage.jsx
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import SEO, { SEO_SITE_URL } from "./SEO.jsx";
 import { API_BASE } from "./api.js";
@@ -67,6 +67,114 @@ function normalizePhoneForLink(phone) {
   if (!phone) return null;
   const cleaned = String(phone).replace(/[^\d+]/g, "");
   return cleaned || null;
+}
+
+function buildAddressQuery(place) {
+  const address = String(place?.address || "").trim();
+  const city = String(place?.city || "").trim();
+
+  if (!address) return city || "";
+  if (!city) return address;
+  if (address.toLowerCase().includes(city.toLowerCase())) return address;
+
+  return `${address}, ${city}`;
+}
+
+function buildYandexRouteUrl(place) {
+  const query = buildAddressQuery(place);
+  return query ? `https://yandex.ru/maps/?text=${encodeURIComponent(query)}` : null;
+}
+
+function getPlaceCoordinates(place) {
+  const latitude = Number(place?.latitude);
+  const longitude = Number(place?.longitude);
+
+  if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) {
+    return null;
+  }
+
+  return { latitude, longitude };
+}
+
+function buildYandexPointUrl(place, basePath = "/maps/") {
+  const coords = getPlaceCoordinates(place);
+  if (!coords) return null;
+
+  const lon = coords.longitude.toFixed(6);
+  const lat = coords.latitude.toFixed(6);
+  const ll = `${lon},${lat}`;
+  const pt = `${lon},${lat},pm2rdm`;
+
+  return `https://yandex.ru${basePath}?ll=${encodeURIComponent(ll)}&z=16&pt=${encodeURIComponent(pt)}`;
+}
+
+function buildYandexSearchQuery(place) {
+  return [place?.name, buildAddressQuery(place)].filter(Boolean).join(", ").trim();
+}
+
+function buildPlaceRouteUrl(place) {
+  const pointUrl = buildYandexPointUrl(place);
+  if (pointUrl) {
+    return pointUrl;
+  }
+
+  const rawLink = typeof place?.link === "string" ? place.link.trim() : "";
+  if (/^https?:\/\/(?:www\.)?yandex\.ru\//i.test(rawLink)) {
+    return rawLink;
+  }
+
+  return buildYandexRouteUrl(place) || null;
+}
+
+function buildYandexMapWidgetUrl(place) {
+  const pointWidgetUrl = buildYandexPointUrl(place, "/map-widget/v1/");
+  if (pointWidgetUrl) {
+    return pointWidgetUrl;
+  }
+
+  const routeUrl = buildPlaceRouteUrl(place);
+  if (!routeUrl) return null;
+
+  try {
+    const url = new URL(routeUrl);
+    const hasSearchText = Boolean(url.searchParams.get("text"));
+
+    if (hasSearchText) {
+      const searchQuery = buildYandexSearchQuery(place);
+      return `https://yandex.ru/map-widget/v1/?mode=search&text=${encodeURIComponent(searchQuery)}`;
+    }
+
+    return routeUrl.replace(
+      /^https?:\/\/(?:www\.)?yandex\.ru\/maps/i,
+      "https://yandex.ru/map-widget/v1"
+    );
+  } catch {
+    return routeUrl.replace(
+      /^https?:\/\/(?:www\.)?yandex\.ru\/maps/i,
+      "https://yandex.ru/map-widget/v1"
+    );
+  }
+}
+
+function getPlaceMarkerClass(type) {
+  const normalizedType = String(type || "").toLowerCase();
+
+  if (normalizedType.includes("коф")) return "route-map-marker--coffee";
+  if (normalizedType.includes("библи")) return "route-map-marker--library";
+  if (normalizedType.includes("бар")) return "route-map-marker--bar";
+  if (normalizedType.includes("антикаф")) return "route-map-marker--anticafe";
+  if (normalizedType.includes("коворк")) return "route-map-marker--coworking";
+
+  return "route-map-marker--default";
+}
+
+function escapeHtml(value) {
+  return String(value ?? "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
 }
 
 function hoursToLines(hours) {
@@ -159,6 +267,8 @@ export default function PlacePage() {
   const [editReviewError, setEditReviewError] = useState("");
   const [editReviewSaving, setEditReviewSaving] = useState(false);
   const [reviewDeletingId, setReviewDeletingId] = useState(null);
+  const placeMapRef = useRef(null);
+  const placeMapInstanceRef = useRef(null);
   const [reviewActionError, setReviewActionError] = useState("");
 
 
@@ -399,6 +509,125 @@ export default function PlacePage() {
     })();
   }, [place]);
 
+  useEffect(() => {
+    if (typeof window === "undefined") return undefined;
+
+    const coords = getPlaceCoordinates(place);
+    const container = placeMapRef.current;
+
+    if (!coords || !container) {
+      if (placeMapInstanceRef.current) {
+        placeMapInstanceRef.current.destroy();
+        placeMapInstanceRef.current = null;
+      }
+      return undefined;
+    }
+
+    let cancelled = false;
+    let existingScriptLoadHandler = null;
+
+    const initMap = () => {
+      if (cancelled || !window.ymaps || !placeMapRef.current) return;
+
+      if (placeMapInstanceRef.current) {
+        placeMapInstanceRef.current.destroy();
+        placeMapInstanceRef.current = null;
+      }
+
+      const map = new window.ymaps.Map(placeMapRef.current, {
+        center: [coords.latitude, coords.longitude],
+        zoom: 16,
+        controls: ["zoomControl"],
+      });
+
+      placeMapInstanceRef.current = map;
+
+      const markerLayout = window.ymaps.templateLayoutFactory.createClass(
+        '<div class="route-map-marker {{ properties.markerClass }}"><span class="route-map-marker__icon"></span></div>'
+      );
+
+      const placemark = new window.ymaps.Placemark(
+        [coords.latitude, coords.longitude],
+        {
+          hintContent: escapeHtml(place?.name || "Место"),
+          balloonContentBody: `
+            <div class="route-map-balloon">
+              <div class="route-map-balloon__title">${escapeHtml(place?.name || "Место")}</div>
+              <div class="route-map-balloon__meta">${escapeHtml(place?.type || "Место")}${place?.city ? `, ${escapeHtml(place.city)}` : ""}</div>
+              ${place?.address ? `<div class="route-map-balloon__address">${escapeHtml(place.address)}</div>` : ""}
+            </div>
+          `,
+          markerClass: getPlaceMarkerClass(place?.type),
+        },
+        {
+          iconLayout: markerLayout,
+          iconOffset: [-12, -30],
+          iconShape: {
+            type: "Circle",
+            coordinates: [12, 14],
+            radius: 12,
+          },
+        }
+      );
+
+      map.geoObjects.add(placemark);
+      map.behaviors.enable("scrollZoom");
+      placeMapRef.current.style.setProperty("--route-map-marker-scale", "0.64");
+    };
+
+    if (window.ymaps) {
+      window.ymaps.ready(initMap);
+      return () => {
+        cancelled = true;
+        if (placeMapInstanceRef.current) {
+          placeMapInstanceRef.current.destroy();
+          placeMapInstanceRef.current = null;
+        }
+      };
+    }
+
+    const existingScript = document.querySelector(
+      'script[src^="https://api-maps.yandex.ru/2.1/"]'
+    );
+
+    if (existingScript) {
+      existingScriptLoadHandler = () => window.ymaps?.ready(initMap);
+      existingScript.addEventListener("load", existingScriptLoadHandler);
+      return () => {
+        cancelled = true;
+        if (existingScriptLoadHandler) {
+          existingScript.removeEventListener("load", existingScriptLoadHandler);
+        }
+        if (placeMapInstanceRef.current) {
+          placeMapInstanceRef.current.destroy();
+          placeMapInstanceRef.current = null;
+        }
+      };
+    }
+
+    const script = document.createElement("script");
+    script.src = "https://api-maps.yandex.ru/2.1/?lang=ru_RU";
+    script.async = true;
+    script.onload = () => window.ymaps?.ready(initMap);
+    document.body.appendChild(script);
+
+    return () => {
+      cancelled = true;
+      if (placeMapInstanceRef.current) {
+        placeMapInstanceRef.current.destroy();
+        placeMapInstanceRef.current = null;
+      }
+    };
+  }, [
+    place?.id,
+    place?.name,
+    place?.type,
+    place?.address,
+    place?.city,
+    place?.latitude,
+    place?.longitude,
+  ]);
+
   if (loading) {
     return (
       <section className="place-page">
@@ -423,14 +652,13 @@ export default function PlacePage() {
     galleryImages[activeIndex] || galleryImages[0] || place.image
   );
 
-  const hasYandexLink = Boolean(place.link);
-  const mapSrc = hasYandexLink
-    ? place.link.replace("yandex.ru/maps", "yandex.ru/map-widget/v1")
-    : null;
+  const placeCoordinates = getPlaceCoordinates(place);
+  const routeUrl = buildPlaceRouteUrl(place);
+  const mapWidgetUrl = buildYandexMapWidgetUrl(place);
 
   const handleRouteClick = () => {
-    if (place.link) {
-      window.open(place.link, "_blank", "noopener,noreferrer");
+    if (routeUrl) {
+      window.open(routeUrl, "_blank", "noopener,noreferrer");
     } else {
       alert("Ссылка на карту пока недоступна");
     }
@@ -1595,9 +1823,15 @@ export default function PlacePage() {
                 </p>
 
                 <div className="place-sidecard__map">
-                  {mapSrc ? (
+                  {placeCoordinates ? (
+                    <div
+                      ref={placeMapRef}
+                      className="place-sidecard__map-canvas"
+                      aria-label={`Карта: ${place.name}`}
+                    />
+                  ) : mapWidgetUrl ? (
                     <iframe
-                      src={mapSrc}
+                      src={mapWidgetUrl}
                       title={`Карта: ${place.name}`}
                       className="place-sidecard__map-iframe"
                       allowFullScreen

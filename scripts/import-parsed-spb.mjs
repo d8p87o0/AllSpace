@@ -36,6 +36,27 @@ function normalizeString(value) {
   return typeof value === "string" ? value.trim() : "";
 }
 
+function buildLocationQuery(address, city) {
+  const safeAddress = normalizeString(address);
+  const safeCity = normalizeString(city);
+
+  if (!safeAddress) return safeCity || "";
+  if (!safeCity) return safeAddress;
+  if (safeAddress.toLowerCase().includes(safeCity.toLowerCase())) return safeAddress;
+
+  return `${safeAddress}, ${safeCity}`;
+}
+
+function buildPlaceMapLink(place) {
+  const raw = normalizeString(place.link || place.sourceUrl);
+  if (/^https?:\/\/(?:www\.)?yandex\.ru\//i.test(raw)) {
+    return raw;
+  }
+
+  const query = buildLocationQuery(place.address, place.city);
+  return query ? `https://yandex.ru/maps/?text=${encodeURIComponent(query)}` : null;
+}
+
 async function main() {
   const raw = await fs.readFile(inputPath, "utf8");
   const parsed = JSON.parse(raw);
@@ -64,7 +85,7 @@ async function main() {
       const imagesJson = JSON.stringify(Array.isArray(place.images) ? place.images.filter(Boolean) : []);
       const featuresJson = JSON.stringify(Array.isArray(place.features) ? place.features.filter(Boolean) : []);
       const type = normalizeString(place.type) || "Коворкинг";
-      const link = normalizeString(place.link || place.sourceUrl) || null;
+      const link = buildPlaceMapLink(place);
       const description = normalizeString(place.description) || null;
       const hours = normalizeString(place.hours) || null;
       const phone = normalizeString(place.phone) || null;
