@@ -10,8 +10,8 @@ services:
       PORT: 3001
       DB_PATH: /app/server/users.db
       DISABLE_EMAIL_VERIFICATION: "true"
-      CLIENT_ORIGIN: https://staging.allspace.com.ru
-      CLIENT_ORIGINS: https://staging.allspace.com.ru,https://www.staging.allspace.com.ru,http://localhost:8080,http://127.0.0.1:8080,http://localhost:5173,http://127.0.0.1:5173
+      CLIENT_ORIGIN: https://allspace.com.ru
+      CLIENT_ORIGINS: https://allspace.com.ru,https://www.allspace.com.ru,http://localhost:8080,http://127.0.0.1:8080,http://localhost:5173,http://127.0.0.1:5173
     ports:
       - "3001:3001"
     healthcheck:
