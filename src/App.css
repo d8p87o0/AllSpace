@@ -1684,6 +1684,25 @@
   margin-top: 3px;
 }
 
+.register-consent--error {
+  color: #b91c1c;
+}
+
+.register-consent--error input[type="checkbox"] {
+  accent-color: #dc2626;
+  outline: 1px solid #fecaca;
+  outline-offset: 1px;
+}
+
+.register-consent-error {
+  margin-top: -6px;
+  margin-bottom: 4px;
+  font-size: 13px;
+  line-height: 1.5;
+  color: #b91c1c;
+  text-align: left;
+}
+
 /* Общие секции */
 
 .place-page__section {

@@ -30,6 +30,7 @@ function RegisterPage() {
     privacyPolicy: false,
     personalData: false,
   });
+  const [showConsentError, setShowConsentError] = useState(false);
   const [resultText, setResultText] = useState("");
   const [isLoading, setIsLoading] = useState(false);
   const [hasError, setHasError] = useState(false);
@@ -150,11 +151,24 @@ function RegisterPage() {
     event.preventDefault();
 
     if (!consents.privacyPolicy || !consents.personalData) {
+      let consentErrorText =
+        "Вы не согласились с политикой конфиденциальности и обработкой персональных данных.";
+
+      if (!consents.privacyPolicy && consents.personalData) {
+        consentErrorText =
+          "Вы не согласились с политикой конфиденциальности.";
+      } else if (consents.privacyPolicy && !consents.personalData) {
+        consentErrorText =
+          "Вы не согласились на обработку персональных данных.";
+      }
+
+      setShowConsentError(true);
       setHasError(true);
-      setResultText("Подтвердите согласие с политикой конфиденциальности и обработкой персональных данных.");
+      setResultText(consentErrorText);
       return;
     }
 
+    setShowConsentError(false);
     setResultText("");
     setHasError(false);
 
@@ -215,14 +229,38 @@ function RegisterPage() {
 
   const handleConsentChange = (name) => (event) => {
     const checked = event.target.checked;
-
-    setConsents((prev) => ({
-      ...prev,
+    const nextConsents = {
+      ...consents,
       [name]: checked,
-    }));
+    };
 
-    setHasError(false);
-    setResultText("");
+    setConsents(nextConsents);
+
+    if (nextConsents.privacyPolicy && nextConsents.personalData) {
+      setShowConsentError(false);
+      setHasError(false);
+      setResultText("");
+      return;
+    }
+
+    if (showConsentError) {
+      let consentErrorText =
+        "Вы не согласились с политикой конфиденциальности и обработкой персональных данных.";
+
+      if (!nextConsents.privacyPolicy && nextConsents.personalData) {
+        consentErrorText =
+          "Вы не согласились с политикой конфиденциальности.";
+      } else if (nextConsents.privacyPolicy && !nextConsents.personalData) {
+        consentErrorText =
+          "Вы не согласились на обработку персональных данных.";
+      }
+
+      setHasError(true);
+      setResultText(consentErrorText);
+    } else {
+      setHasError(false);
+      setResultText("");
+    }
   };
 
   return (
@@ -246,7 +284,7 @@ function RegisterPage() {
         <div className="login-card">
           <h2 className="login-card__title">Регистрация</h2>
 
-          {hasError && resultText && (
+          {hasError && resultText && !showConsentError && (
             <div className="login-error-banner">{resultText}</div>
           )}
 
@@ -377,7 +415,13 @@ function RegisterPage() {
               required
             />
 
-            <label className="register-consent">
+            <label
+              className={`register-consent ${
+                showConsentError && !consents.privacyPolicy
+                  ? "register-consent--error"
+                  : ""
+              }`}
+            >
               <input
                 type="checkbox"
                 checked={consents.privacyPolicy}
@@ -386,7 +430,13 @@ function RegisterPage() {
               <span>Я согласен с политикой конфиденциальности</span>
             </label>
 
-            <label className="register-consent">
+            <label
+              className={`register-consent ${
+                showConsentError && !consents.personalData
+                  ? "register-consent--error"
+                  : ""
+              }`}
+            >
               <input
                 type="checkbox"
                 checked={consents.personalData}
@@ -395,15 +445,14 @@ function RegisterPage() {
               <span>Я согласен на обработку персональных данных</span>
             </label>
 
+            {showConsentError && resultText && (
+              <div className="register-consent-error">{resultText}</div>
+            )}
+
             <button
               type="submit"
               className="login-submit"
-              disabled={
-                !consents.privacyPolicy ||
-                !consents.personalData ||
-                isLoading ||
-                !formValid
-              }
+              disabled={isLoading || !formValid}
             >
               {isLoading ? "Отправляем..." : "Продолжить"}
             </button>
