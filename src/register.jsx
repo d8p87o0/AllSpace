@@ -1,5 +1,5 @@
 ﻿// RegisterPage.jsx
-import { useState, useEffect } from "react";
+import { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import "./App.css";
 import SEO, { SEO_SITE_URL } from "./SEO.jsx";
@@ -41,10 +41,16 @@ function RegisterPage() {
   // 🔐 ошибки и валидность формы
   const [emailError, setEmailError] = useState("");
   const [passwordError, setPasswordError] = useState("");
-  const [formValid, setFormValid] = useState(false);
-
   // 👁‍🗨 флаг "пользователь уже ушёл с поля почты"
   const [emailDirty, setEmailDirty] = useState(false);
+
+  const isValidEmail = (value) => {
+    const normalized = String(value || "").trim().toLowerCase();
+    const re =
+      /^(([^<>()[\]\\.,;:\s@"]+(\.[^<>()[\]\\.,;:\s@"]+)*)|.(".+"))@((\[[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\])|(([a-zA-Z\-0-9]+\.)+[a-zA-Z]{2,}))$/;
+
+    return re.test(normalized);
+  };
 
   const getConsentErrorText = (nextConsents = consents) => {
     if (!nextConsents.privacyPolicy && !nextConsents.personalData) {
@@ -61,14 +67,6 @@ function RegisterPage() {
 
     return "";
   };
-
-  useEffect(() => {
-    if (emailError || passwordError) {
-      setFormValid(false);
-    } else {
-      setFormValid(true);
-    }
-  }, [emailError, passwordError]);
 
   const handleChange = (event) => {
     const { name, value } = event.target;
@@ -127,10 +125,7 @@ function RegisterPage() {
     setHasError(false);
     setResultText("");
 
-    const re =
-      /^(([^<>()[\]\\.,;:\s@"]+(\.[^<>()[\]\\.,;:\s@"]+)*)|.(".+"))@((\[[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\])|(([a-zA-Z\-0-9]+\.)+[a-zA-Z]{2,}))$/;
-
-    if (!re.test(String(value).toLowerCase())) {
+    if (!isValidEmail(value)) {
       setEmailError("Некорректный емейл");
     } else {
       setEmailError("");
@@ -166,6 +161,40 @@ function RegisterPage() {
   const handleSubmit = async (event) => {
     event.preventDefault();
 
+    const firstName = form.firstName.trim();
+    const lastName = form.lastName.trim();
+    const city = form.city.trim();
+    const email = form.phone.trim();
+    const login = form.login.trim();
+    const status = form.status.trim();
+    const passwordVisible = form.passwordVisible;
+    const passwordHidden = form.passwordHidden;
+
+    if (
+      !firstName ||
+      !lastName ||
+      !city ||
+      !email ||
+      !status ||
+      !login ||
+      !passwordVisible ||
+      !passwordHidden
+    ) {
+      setShowConsentError(false);
+      setHasError(true);
+      setResultText("Заполните все обязательные поля.");
+      return;
+    }
+
+    if (!isValidEmail(email)) {
+      setShowConsentError(false);
+      setEmailDirty(true);
+      setEmailError("Некорректный емейл");
+      setHasError(true);
+      setResultText("Укажите корректный email.");
+      return;
+    }
+
     if (!consents.privacyPolicy || !consents.personalData) {
       setShowConsentError(true);
       setHasError(true);
@@ -179,12 +208,14 @@ function RegisterPage() {
 
     // валидация фронта
     if (emailError || passwordError) {
+      setShowConsentError(false);
       setHasError(true);
       setResultText("Пожалуйста, исправьте ошибки в форме.");
       return;
     }
 
-    if (form.passwordVisible !== form.passwordHidden) {
+    if (passwordVisible !== passwordHidden) {
+      setShowConsentError(false);
       setHasError(true);
       setResultText("Пароли не совпадают.");
       return;
@@ -200,13 +231,13 @@ function RegisterPage() {
           "Content-Type": "application/json",
         },
         body: JSON.stringify({
-          login: form.login,
-          password: form.passwordHidden,
-          firstName: form.firstName,
-          lastName: form.lastName,
-          city: form.city,
-          email: form.phone, // почта
-          status: form.status,
+          login,
+          password: passwordHidden,
+          firstName,
+          lastName,
+          city,
+          email,
+          status,
           acceptedPrivacyPolicy: consents.privacyPolicy,
           acceptedPersonalDataProcessing: consents.personalData,
         }),
@@ -218,7 +249,7 @@ function RegisterPage() {
         navigate("/login");
       } else if (data.ok) {
         // переходим на страницу ввода кода
-        navigate("/verify-email", { state: { email: form.phone } });
+            navigate("/verify-email", { state: { email } });
       } else {
         setHasError(true);
         setResultText(data.message || "Ошибка отправки кода.");
@@ -280,7 +311,7 @@ function RegisterPage() {
             <div className="login-error-banner">{resultText}</div>
           )}
 
-          <form className="login-form" onSubmit={handleSubmit}>
+          <form className="login-form" onSubmit={handleSubmit} noValidate>
             <input
               type="text"
               className="login-input"
@@ -444,7 +475,7 @@ function RegisterPage() {
             <button
               type="submit"
               className="login-submit"
-              disabled={isLoading || !formValid}
+              disabled={isLoading}
             >
               {isLoading ? "Отправляем..." : "Продолжить"}
             </button>
