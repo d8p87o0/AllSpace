@@ -1388,8 +1388,27 @@ app.post("/api/login", (req, res) => {
 // ===================== РЕГИСТРАЦИЯ: ШАГ 1 =====================
 
 app.post("/api/register/start", (req, res) => {
-  const { login, password, firstName, lastName, city, email, status, hours, phone} = req.body;
+  const {
+    login,
+    password,
+    firstName,
+    lastName,
+    city,
+    email,
+    status,
+    hours,
+    phone,
+    acceptedPrivacyPolicy,
+    acceptedPersonalDataProcessing,
+  } = req.body;
   const cityValue = String(city || "").trim();
+
+  if (!acceptedPrivacyPolicy || !acceptedPersonalDataProcessing) {
+    return res.status(400).json({
+      ok: false,
+      message: "Необходимо подтвердить оба согласия",
+    });
+  }
 
   if (!login || !password) {
     return res.status(400).json({

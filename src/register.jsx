@@ -26,7 +26,10 @@ function RegisterPage() {
     passwordHidden: "",
   });
 
-  const [agree, setAgree] = useState(false);
+  const [consents, setConsents] = useState({
+    privacyPolicy: false,
+    personalData: false,
+  });
   const [resultText, setResultText] = useState("");
   const [isLoading, setIsLoading] = useState(false);
   const [hasError, setHasError] = useState(false);
@@ -146,7 +149,9 @@ function RegisterPage() {
   const handleSubmit = async (event) => {
     event.preventDefault();
 
-    if (!agree) {
+    if (!consents.privacyPolicy || !consents.personalData) {
+      setHasError(true);
+      setResultText("Подтвердите согласие с политикой конфиденциальности и обработкой персональных данных.");
       return;
     }
 
@@ -183,6 +188,8 @@ function RegisterPage() {
           city: form.city,
           email: form.phone, // почта
           status: form.status,
+          acceptedPrivacyPolicy: consents.privacyPolicy,
+          acceptedPersonalDataProcessing: consents.personalData,
         }),
       });
 
@@ -204,6 +211,18 @@ function RegisterPage() {
     } finally {
       setIsLoading(false);
     }
+  };
+
+  const handleConsentChange = (name) => (event) => {
+    const checked = event.target.checked;
+
+    setConsents((prev) => ({
+      ...prev,
+      [name]: checked,
+    }));
+
+    setHasError(false);
+    setResultText("");
   };
 
   return (
@@ -361,18 +380,30 @@ function RegisterPage() {
             <label className="register-consent">
               <input
                 type="checkbox"
-                checked={agree}
-                onChange={(e) => setAgree(e.target.checked)}
+                checked={consents.privacyPolicy}
+                onChange={handleConsentChange("privacyPolicy")}
               />
-              <span>
-                Я согласен на обработку и хранение своих персональных данных
-              </span>
+              <span>Я согласен с политикой конфиденциальности</span>
+            </label>
+
+            <label className="register-consent">
+              <input
+                type="checkbox"
+                checked={consents.personalData}
+                onChange={handleConsentChange("personalData")}
+              />
+              <span>Я согласен на обработку персональных данных</span>
             </label>
 
             <button
               type="submit"
               className="login-submit"
-              disabled={!agree || isLoading || !formValid}
+              disabled={
+                !consents.privacyPolicy ||
+                !consents.personalData ||
+                isLoading ||
+                !formValid
+              }
             >
               {isLoading ? "Отправляем..." : "Продолжить"}
             </button>
