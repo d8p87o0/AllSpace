@@ -46,6 +46,22 @@ function RegisterPage() {
   // 👁‍🗨 флаг "пользователь уже ушёл с поля почты"
   const [emailDirty, setEmailDirty] = useState(false);
 
+  const getConsentErrorText = (nextConsents = consents) => {
+    if (!nextConsents.privacyPolicy && !nextConsents.personalData) {
+      return "Вы не согласились с политикой конфиденциальности и обработкой персональных данных.";
+    }
+
+    if (!nextConsents.privacyPolicy) {
+      return "Вы не согласились с политикой конфиденциальности.";
+    }
+
+    if (!nextConsents.personalData) {
+      return "Вы не согласились на обработку персональных данных.";
+    }
+
+    return "";
+  };
+
   useEffect(() => {
     if (emailError || passwordError) {
       setFormValid(false);
@@ -151,20 +167,9 @@ function RegisterPage() {
     event.preventDefault();
 
     if (!consents.privacyPolicy || !consents.personalData) {
-      let consentErrorText =
-        "Вы не согласились с политикой конфиденциальности и обработкой персональных данных.";
-
-      if (!consents.privacyPolicy && consents.personalData) {
-        consentErrorText =
-          "Вы не согласились с политикой конфиденциальности.";
-      } else if (consents.privacyPolicy && !consents.personalData) {
-        consentErrorText =
-          "Вы не согласились на обработку персональных данных.";
-      }
-
       setShowConsentError(true);
       setHasError(true);
-      setResultText(consentErrorText);
+      setResultText(getConsentErrorText());
       return;
     }
 
@@ -229,38 +234,25 @@ function RegisterPage() {
 
   const handleConsentChange = (name) => (event) => {
     const checked = event.target.checked;
-    const nextConsents = {
-      ...consents,
-      [name]: checked,
-    };
 
-    setConsents(nextConsents);
+    setConsents((prev) => {
+      const nextConsents = {
+        ...prev,
+        [name]: checked,
+      };
 
-    if (nextConsents.privacyPolicy && nextConsents.personalData) {
-      setShowConsentError(false);
-      setHasError(false);
-      setResultText("");
-      return;
-    }
-
-    if (showConsentError) {
-      let consentErrorText =
-        "Вы не согласились с политикой конфиденциальности и обработкой персональных данных.";
-
-      if (!nextConsents.privacyPolicy && nextConsents.personalData) {
-        consentErrorText =
-          "Вы не согласились с политикой конфиденциальности.";
-      } else if (nextConsents.privacyPolicy && !nextConsents.personalData) {
-        consentErrorText =
-          "Вы не согласились на обработку персональных данных.";
+      if (nextConsents.privacyPolicy && nextConsents.personalData) {
+        setShowConsentError(false);
+        setHasError(false);
+        setResultText("");
+      } else if (showConsentError) {
+        setShowConsentError(true);
+        setHasError(true);
+        setResultText(getConsentErrorText(nextConsents));
       }
 
-      setHasError(true);
-      setResultText(consentErrorText);
-    } else {
-      setHasError(false);
-      setResultText("");
-    }
+      return nextConsents;
+    });
   };
 
   return (
