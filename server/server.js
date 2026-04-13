@@ -69,6 +69,10 @@ app.use(
 );
 app.use(express.json());
 
+app.get("/healthz", (_req, res) => {
+  res.json({ ok: true });
+});
+
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
@@ -310,6 +314,7 @@ db.serialize(() => {
       type TEXT,
       city TEXT,
       address TEXT,
+      display_order INTEGER DEFAULT 0,
       image TEXT,
       images TEXT, -- JSON-массив ссылок на картинки
       badge TEXT,
@@ -317,6 +322,9 @@ db.serialize(() => {
       reviews INTEGER,
       features TEXT, -- JSON-строка с массивом фич
       link TEXT,
+      latitude REAL,
+      longitude REAL,
+      description TEXT,
       hours TEXT,
       phone TEXT,
       moderation_status TEXT DEFAULT 'approved',
@@ -336,6 +344,7 @@ db.serialize(() => {
       user_name TEXT,
       rating INTEGER NOT NULL CHECK (rating >= 1 AND rating <= 5),
       text TEXT NOT NULL,
+      images TEXT,                 -- JSON array of review photo URLs
       created_at INTEGER NOT NULL DEFAULT (strftime('%s','now')),
       FOREIGN KEY (place_id) REFERENCES places(id) ON DELETE CASCADE
     )
@@ -348,6 +357,115 @@ db.serialize(() => {
   db.run(
     "CREATE INDEX IF NOT EXISTS idx_place_reviews_user_id ON place_reviews(user_id)"
   );
+
+
+    // ===================== ARTICLES =====================
+    db.run(`
+    CREATE TABLE IF NOT EXISTS articles (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      title TEXT NOT NULL,
+      cover_image TEXT NOT NULL,        -- обязательная обложка (/photos/..)
+      content_json TEXT NOT NULL,       -- JSON блоков (как телеграф)
+      excerpt TEXT,
+      status TEXT DEFAULT 'draft',      -- draft | pending | approved | rejected
+      display_order INTEGER DEFAULT 0,  -- порядок вывода на сайте
+      author_id INTEGER,
+      author_login TEXT,
+      submitted_at INTEGER,
+      published_at INTEGER,
+      created_at INTEGER NOT NULL DEFAULT (strftime('%s','now')),
+      updated_at INTEGER
+    )
+  `);
+
+  db.run(`
+    CREATE TABLE IF NOT EXISTS article_comments (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      article_id INTEGER NOT NULL,
+      user_id INTEGER,
+      user_login TEXT,
+      user_name TEXT,
+      text TEXT NOT NULL,
+      created_at INTEGER NOT NULL DEFAULT (strftime('%s','now')),
+      FOREIGN KEY (article_id) REFERENCES articles(id) ON DELETE CASCADE
+    )
+  `);
+
+  db.run(`
+    CREATE TABLE IF NOT EXISTS article_favorites (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      article_id INTEGER NOT NULL,
+      user_id INTEGER,
+      user_login TEXT,
+      created_at INTEGER NOT NULL DEFAULT (strftime('%s','now')),
+      UNIQUE(article_id, user_id, user_login)
+    )
+  `);
+
+    // ===================== ANALYTICS =====================
+    db.run(`
+    CREATE TABLE IF NOT EXISTS analytics_events (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      event_name TEXT NOT NULL,          -- session_start, session_end, place_card_click ...
+      path TEXT,
+      referrer TEXT,
+      source TEXT,
+      ip TEXT,
+      user_agent TEXT,
+      device_type TEXT,
+      visitor_id TEXT,                   -- из localStorage фронта
+      session_id TEXT,                   -- на одну сессию/вкладку
+      visitor_key TEXT,                  -- fallback/нормализованный ключ
+      session_key TEXT,                  -- fallback/нормализованный ключ
+      entity_type TEXT,                  -- place | article | popup | session
+      entity_id TEXT,
+      entity_title TEXT,
+      payload_json TEXT,
+      duration_sec INTEGER,              -- для session_end
+      created_at INTEGER NOT NULL DEFAULT (strftime('%s','now'))
+    )
+  `);
+
+  db.run(`
+    CREATE INDEX IF NOT EXISTS idx_analytics_event_name
+    ON analytics_events(event_name)
+  `);
+
+  db.run(`
+    CREATE INDEX IF NOT EXISTS idx_analytics_created_at
+    ON analytics_events(created_at)
+  `);
+
+  db.run(`
+    CREATE INDEX IF NOT EXISTS idx_analytics_session_key
+    ON analytics_events(session_key)
+  `);
+
+  db.run(`
+    CREATE INDEX IF NOT EXISTS idx_analytics_visitor_key
+    ON analytics_events(visitor_key)
+  `);
+
+  db.run(`
+    CREATE INDEX IF NOT EXISTS idx_analytics_entity
+    ON analytics_events(entity_type, entity_id)
+  `);
+
+  db.run(`CREATE INDEX IF NOT EXISTS idx_articles_status ON articles(status)`);
+  db.run(`CREATE INDEX IF NOT EXISTS idx_article_comments_article ON article_comments(article_id)`);
+  db.run(`CREATE INDEX IF NOT EXISTS idx_article_fav_article ON article_favorites(article_id)`);
+
+  const ensurePlacesOrderIndex = () => {
+    db.run("CREATE INDEX IF NOT EXISTS idx_places_order ON places(display_order)", (e) => {
+      if (e) console.error("Ошибка создания idx_places_order:", e);
+    });
+  };
+
+  const ensureArticlesOrderIndex = () => {
+    db.run("CREATE INDEX IF NOT EXISTS idx_articles_order ON articles(display_order)", (e) => {
+      if (e) console.error("Ошибка создания idx_articles_order:", e);
+    });
+  };
 
   // --- 3) МИГРАЦИИ PLACES: добавляем недостающие колонки ---
   db.all("PRAGMA table_info(places)", (err, columns) => {
@@ -379,6 +497,27 @@ db.serialize(() => {
       });
     }
 
+    if (!colNames.has("description")) {
+      db.run("ALTER TABLE places ADD COLUMN description TEXT", (e) => {
+        if (e) console.error("Ошибка добавления description в places:", e);
+        else console.log("Столбец description добавлен в таблицу places");
+      });
+    }
+
+    if (!colNames.has("latitude")) {
+      db.run("ALTER TABLE places ADD COLUMN latitude REAL", (e) => {
+        if (e) console.error("DB error (add latitude to places):", e);
+        else console.log("Column latitude added to places");
+      });
+    }
+
+    if (!colNames.has("longitude")) {
+      db.run("ALTER TABLE places ADD COLUMN longitude REAL", (e) => {
+        if (e) console.error("DB error (add longitude to places):", e);
+        else console.log("Column longitude added to places");
+      });
+    }
+
     if (!colNames.has("moderation_status")) {
       db.run("ALTER TABLE places ADD COLUMN moderation_status TEXT DEFAULT 'approved'", (e) => {
         if (e) console.error("Ошибка добавления moderation_status в places:", e);
@@ -398,6 +537,35 @@ db.serialize(() => {
         if (e) console.error("Ошибка добавления submitted_at в places:", e);
         else console.log("Столбец submitted_at добавлен в таблицу places");
       });
+    }
+
+    if (!colNames.has("display_order")) {
+      db.run("ALTER TABLE places ADD COLUMN display_order INTEGER DEFAULT 0", (e) => {
+        if (e) console.error("Ошибка добавления display_order в places:", e);
+        else console.log("Столбец display_order добавлен в таблицу places");
+        ensurePlacesOrderIndex();
+      });
+    } else {
+      ensurePlacesOrderIndex();
+    }
+  });
+
+  db.all("PRAGMA table_info(articles)", (err, columns) => {
+    if (err) {
+      console.error("Ошибка PRAGMA table_info(articles):", err);
+      return;
+    }
+
+    const colNames = new Set((columns || []).map((c) => c.name));
+
+    if (!colNames.has("display_order")) {
+      db.run("ALTER TABLE articles ADD COLUMN display_order INTEGER DEFAULT 0", (e) => {
+        if (e) console.error("Ошибка добавления display_order в articles:", e);
+        else console.log("Столбец display_order добавлен в таблицу articles");
+        ensureArticlesOrderIndex();
+      });
+    } else {
+      ensureArticlesOrderIndex();
     }
   });
 
@@ -428,6 +596,13 @@ db.serialize(() => {
     }
 
     const colNames = new Set((columns || []).map((c) => c.name));
+
+    if (!colNames.has("images")) {
+      db.run("ALTER TABLE place_reviews ADD COLUMN images TEXT", (e) => {
+        if (e) console.error("DB error (add images to place_reviews):", e);
+        else console.log("Column images added to place_reviews");
+      });
+    }
 
     // 5.1) добавить колонку user_id
     if (!colNames.has("user_id")) {
@@ -489,13 +664,13 @@ db.serialize(() => {
 
         const insertSql = `
           INSERT INTO places
-            (name, type, city, address, image, images, badge, rating, reviews, features, link, hours, phone)
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            (name, type, city, address, display_order, image, images, badge, rating, reviews, features, link, description, hours, phone)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         `;
 
         const stmt = db.prepare(insertSql);
 
-        for (const p of placesFromJson) {
+        placesFromJson.forEach((p, index) => {
           const featuresJson = JSON.stringify(p.features || []);
           const imagesJson = JSON.stringify(p.images || []);
 
@@ -504,6 +679,7 @@ db.serialize(() => {
             p.type || null,
             p.city || null,
             p.address || null,
+            index + 1,
             p.image || null,
             imagesJson,
             p.badge || null,
@@ -511,10 +687,11 @@ db.serialize(() => {
             typeof p.reviews === "number" ? p.reviews : null,
             featuresJson,
             p.link || null,
+            p.description || null,
             p.hours || null,
             p.phone || null
           );
-        }
+        });
 
         stmt.finalize();
         console.log("Импорт places.json в БД завершён.");
@@ -547,6 +724,7 @@ function mapPlaceRow(row) {
     type: row.type,
     city: row.city,
     address: row.address,
+    displayOrder: Number(row.display_order || 0),
     image: row.image,
     images,
     badge: row.badge,
@@ -554,6 +732,9 @@ function mapPlaceRow(row) {
     reviews: row.reviews,
     features,
     link: row.link,
+    latitude: row.latitude ?? null,
+    longitude: row.longitude ?? null,
+    description: row.description || null,
     hours: row.hours || null,
     phone: row.phone || null,
     moderation_status: row.moderation_status || "approved",
@@ -575,6 +756,28 @@ function mapReviewRow(row, req) {
     ? (String(avatarRaw).startsWith("http") ? avatarRaw : `${host}${avatarRaw}`)
     : null;
 
+  const normalizeReviewMedia = (url) => {
+    if (!url) return null;
+    const s = String(url).trim();
+    if (/^data:/i.test(s)) return s;
+    const photosMatch = s.match(/^https?:\/\/[^/]+(\/photos\/.*)$/i);
+    if (photosMatch) return photosMatch[1];
+    if (/^https?:\/\//i.test(s)) return s;
+    if (s.startsWith("/")) return s;
+    return `/photos/${s}`;
+  };
+
+  let images = [];
+  try {
+    images = row.images ? JSON.parse(row.images) : [];
+  } catch (e) {
+    images = [];
+  }
+
+  const normalizedImages = Array.isArray(images)
+    ? images.map(normalizeReviewMedia).filter(Boolean)
+    : [];
+
   return {
     id: row.id,
     placeId: row.place_id,
@@ -584,6 +787,7 @@ function mapReviewRow(row, req) {
     userAvatar, // ✅ добавили
     rating: row.rating,
     text: row.text,
+    images: normalizedImages,
     createdAt,
   };
 }
@@ -613,6 +817,479 @@ function recalcPlaceRating(placeId, cb = () => {}) {
   });
 }
 
+function resolveRequestUser(req, cb) {
+  const { userId, userLogin } = req.body || {};
+  const safeUserId = Number.isInteger(Number(userId)) ? Number(userId) : null;
+  const loginFromBody = typeof userLogin === "string" ? userLogin.trim() : "";
+
+  if (!safeUserId) {
+    return cb(null, {
+      id: null,
+      login: loginFromBody || null,
+      isAdmin: loginFromBody === "admin",
+    });
+  }
+
+  db.get("SELECT id, login FROM users WHERE id = ?", [safeUserId], (err, row) => {
+    if (err) return cb(err);
+    const login = row?.login || loginFromBody || null;
+    return cb(null, {
+      id: row?.id ?? safeUserId,
+      login,
+      isAdmin: login === "admin",
+    });
+  });
+}
+
+function resolveRequestUserAsync(req) {
+  return new Promise((resolve, reject) => {
+    resolveRequestUser(req, (err, requester) => {
+      if (err) {
+        reject(err);
+        return;
+      }
+      resolve(requester);
+    });
+  });
+}
+
+function dbRunAsync(sql, params = []) {
+  return new Promise((resolve, reject) => {
+    db.run(sql, params, function (err) {
+      if (err) {
+        reject(err);
+        return;
+      }
+
+      resolve({
+        lastID: this.lastID,
+        changes: this.changes,
+      });
+    });
+  });
+}
+
+function dbGetAsync(sql, params = []) {
+  return new Promise((resolve, reject) => {
+    db.get(sql, params, (err, row) => {
+      if (err) {
+        reject(err);
+        return;
+      }
+      resolve(row || null);
+    });
+  });
+}
+
+function dbAllAsync(sql, params = []) {
+  return new Promise((resolve, reject) => {
+    db.all(sql, params, (err, rows) => {
+      if (err) {
+        reject(err);
+        return;
+      }
+      resolve(rows || []);
+    });
+  });
+}
+
+const GEOCODER_USER_AGENT = "AllSpaceServerGeocoder/1.0";
+
+function parseFiniteCoordinate(value) {
+  const numeric = Number(value);
+  return Number.isFinite(numeric) ? numeric : null;
+}
+
+function parseCoordinatesFromLink(link) {
+  const rawLink = typeof link === "string" ? link.trim() : "";
+  if (!rawLink) return null;
+
+  try {
+    const url = new URL(rawLink);
+    const ptValue = url.searchParams.get("pt");
+    if (ptValue) {
+      const [lonRaw, latRaw] = String(ptValue).split(",");
+      const latitude = parseFiniteCoordinate(latRaw);
+      const longitude = parseFiniteCoordinate(lonRaw);
+      if (latitude !== null && longitude !== null) {
+        return { latitude, longitude };
+      }
+    }
+
+    const llValue = url.searchParams.get("ll");
+    if (llValue) {
+      const [lonRaw, latRaw] = String(llValue).split(",");
+      const latitude = parseFiniteCoordinate(latRaw);
+      const longitude = parseFiniteCoordinate(lonRaw);
+      if (latitude !== null && longitude !== null) {
+        return { latitude, longitude };
+      }
+    }
+  } catch {
+    return null;
+  }
+
+  return null;
+}
+
+function normalizeGeocodeAddress(address = "") {
+  return String(address || "")
+    .replace(/\s+/g, " ")
+    .replace(/\s+,/g, ",")
+    .replace(/,+/g, ",")
+    .replace(/,\s*,/g, ",")
+    .replace(/,\s*$/g, "")
+    .trim();
+}
+
+async function geocodeByAddress({ city, address }) {
+  const normalizedAddress = normalizeGeocodeAddress(address);
+  const normalizedCity = String(city || "").trim();
+  const query = [normalizedAddress, normalizedCity, "Россия"].filter(Boolean).join(", ");
+  if (!query) return null;
+
+  const url =
+    "https://nominatim.openstreetmap.org/search?format=jsonv2&limit=1&countrycodes=ru&q=" +
+    encodeURIComponent(query);
+
+  try {
+    const res = await fetch(url, {
+      headers: {
+        "User-Agent": GEOCODER_USER_AGENT,
+        Accept: "application/json",
+      },
+    });
+
+    if (!res.ok) {
+      return null;
+    }
+
+    const data = await res.json();
+    const first = Array.isArray(data) ? data[0] : null;
+    if (!first) return null;
+
+    const latitude = parseFiniteCoordinate(first.lat);
+    const longitude = parseFiniteCoordinate(first.lon);
+    if (latitude === null || longitude === null) {
+      return null;
+    }
+
+    return { latitude, longitude };
+  } catch (error) {
+    console.error("Geocode request failed:", error.message);
+    return null;
+  }
+}
+
+async function resolvePlaceCoordinates({ city, address, link }) {
+  return parseCoordinatesFromLink(link) || (await geocodeByAddress({ city, address })) || null;
+}
+
+async function withTransaction(task) {
+  await dbRunAsync("BEGIN IMMEDIATE TRANSACTION");
+
+  try {
+    const result = await task();
+    await dbRunAsync("COMMIT");
+    return result;
+  } catch (err) {
+    try {
+      await dbRunAsync("ROLLBACK");
+    } catch {}
+    throw err;
+  }
+}
+
+let orderLockChain = Promise.resolve();
+
+function withOrderLock(task) {
+  const run = orderLockChain.catch(() => {}).then(task);
+  orderLockChain = run.catch(() => {});
+  return run;
+}
+
+function getOrderTable(table) {
+  if (table === "places" || table === "articles") {
+    return table;
+  }
+  throw new Error(`Unknown order table: ${table}`);
+}
+
+function parseDisplayOrder(value) {
+  const num = Number(value);
+  return Number.isInteger(num) && num > 0 ? num : null;
+}
+
+function clampDisplayOrder(value, maxOrder) {
+  if (!maxOrder || maxOrder < 1) return 1;
+  if (!value) return maxOrder;
+  return Math.max(1, Math.min(value, maxOrder));
+}
+
+async function ensureSequentialDisplayOrders(table) {
+  const safeTable = getOrderTable(table);
+  const orderBySql =
+    safeTable === "articles"
+      ? `
+        ORDER BY
+          CASE WHEN COALESCE(display_order, 0) > 0 THEN 0 ELSE 1 END,
+          COALESCE(NULLIF(display_order, 0), 0) DESC,
+          published_at DESC,
+          created_at DESC,
+          id DESC
+      `
+      : `
+        ORDER BY
+          CASE WHEN COALESCE(display_order, 0) > 0 THEN 0 ELSE 1 END,
+          COALESCE(NULLIF(display_order, 0), 2147483647) ASC,
+          id ASC
+      `;
+
+  const rows = await dbAllAsync(
+    `SELECT id, COALESCE(display_order, 0) AS display_order FROM ${safeTable} ${orderBySql}`
+  );
+
+  const isSequential = rows.every((row, index) => Number(row.display_order || 0) === index + 1);
+  if (isSequential) {
+    return;
+  }
+
+  await withTransaction(async () => {
+    for (let index = 0; index < rows.length; index += 1) {
+      await dbRunAsync(`UPDATE ${safeTable} SET display_order = ? WHERE id = ?`, [index + 1, rows[index].id]);
+    }
+  });
+}
+
+async function allocateDisplayOrderOnInsert(table, requestedOrder) {
+  const safeTable = getOrderTable(table);
+  const row = await dbGetAsync(`SELECT COUNT(*) AS cnt FROM ${safeTable}`);
+  const maxOrder = Number(row?.cnt || 0) + 1;
+  const targetOrder = clampDisplayOrder(requestedOrder, maxOrder);
+
+  await dbRunAsync(
+    `UPDATE ${safeTable} SET display_order = display_order + 1 WHERE COALESCE(display_order, 0) >= ?`,
+    [targetOrder]
+  );
+
+  return targetOrder;
+}
+
+async function moveDisplayOrder(table, id, currentOrder, requestedOrder) {
+  const safeTable = getOrderTable(table);
+  const row = await dbGetAsync(`SELECT COUNT(*) AS cnt FROM ${safeTable} WHERE id != ?`, [id]);
+  const maxOrder = Number(row?.cnt || 0) + 1;
+  const normalizedCurrent = parseDisplayOrder(currentOrder);
+  const targetOrder = clampDisplayOrder(requestedOrder || normalizedCurrent, maxOrder);
+
+  if (!normalizedCurrent) {
+    await dbRunAsync(
+      `UPDATE ${safeTable}
+       SET display_order = display_order + 1
+       WHERE id != ? AND COALESCE(display_order, 0) >= ?`,
+      [id, targetOrder]
+    );
+    return targetOrder;
+  }
+
+  if (targetOrder < normalizedCurrent) {
+    await dbRunAsync(
+      `UPDATE ${safeTable}
+       SET display_order = display_order + 1
+       WHERE id != ? AND display_order >= ? AND display_order < ?`,
+      [id, targetOrder, normalizedCurrent]
+    );
+  } else if (targetOrder > normalizedCurrent) {
+    await dbRunAsync(
+      `UPDATE ${safeTable}
+       SET display_order = display_order - 1
+       WHERE id != ? AND display_order <= ? AND display_order > ?`,
+      [id, targetOrder, normalizedCurrent]
+    );
+  }
+
+  return targetOrder;
+}
+
+async function closeDisplayOrderGap(table, removedOrder) {
+  const safeTable = getOrderTable(table);
+  const normalizedOrder = parseDisplayOrder(removedOrder);
+
+  if (!normalizedOrder) {
+    return;
+  }
+
+  await dbRunAsync(
+    `UPDATE ${safeTable} SET display_order = display_order - 1 WHERE display_order > ?`,
+    [normalizedOrder]
+  );
+}
+
+function mapArticleRow(row, req) {
+  let content = [];
+  try {
+    content = row.content_json ? JSON.parse(row.content_json) : [];
+  } catch {
+    content = [];
+  }
+
+  const host = req ? `${req.protocol}://${req.get("host")}` : "";
+
+  const normalizeAvatar = (avatarRaw) => {
+    if (!avatarRaw) return null;
+    return String(avatarRaw).startsWith("http") ? avatarRaw : `${host}${avatarRaw}`;
+  };
+
+  const createdAtSec = Number(row.created_at || 0);
+  const publishedAtSec = Number(row.published_at || 0);
+
+  const createdAtHuman = createdAtSec
+    ? new Date(createdAtSec * 1000).toLocaleDateString("ru-RU", {
+        day: "numeric",
+        month: "short",
+        year: "numeric",
+      })
+    : "";
+
+  const publishedAtHuman = publishedAtSec
+    ? new Date(publishedAtSec * 1000).toLocaleDateString("ru-RU", {
+        day: "numeric",
+        month: "short",
+        year: "numeric",
+      })
+    : "";
+
+  const authorName = [row.author_first_name, row.author_last_name]
+    .filter(Boolean)
+    .join(" ")
+    .trim();
+
+  return {
+    id: row.id,
+    title: row.title,
+    coverImage: row.cover_image,
+    content,
+    excerpt: row.excerpt || "",
+    status: row.status || "draft",
+    displayOrder: Number(row.display_order || 0),
+    authorId: row.author_id ?? null,
+    authorLogin: row.author_login || null,
+    authorName: authorName || row.author_login || null,
+    authorAvatar: normalizeAvatar(row.author_avatar || null),
+    submittedAt: row.submitted_at || null,
+    publishedAt: row.published_at || null,
+    publishedAtHuman,
+    createdAt: row.created_at || null,
+    createdAtHuman,
+    updatedAt: row.updated_at || null,
+  };
+}
+
+function mapArticleCommentRow(row, req) {
+  const createdAtSec = Number(row.created_at || 0);
+  const createdAt = createdAtSec
+    ? new Date(createdAtSec * 1000).toISOString()
+    : new Date().toISOString();
+
+  const host = req ? `${req.protocol}://${req.get("host")}` : "";
+  const avatarRaw = row.user_avatar || null;
+
+  const userAvatar = avatarRaw
+    ? (String(avatarRaw).startsWith("http") ? avatarRaw : `${host}${avatarRaw}`)
+    : null;
+
+  return {
+    id: row.id,
+    articleId: row.article_id,
+    userId: row.user_id ?? null,
+    userLogin: row.user_login || null,
+    userName: row.user_name || null,
+    userAvatar,
+    text: row.text,
+    createdAt,
+  };
+}
+
+function normalizeArticleMedia(url) {
+  if (!url) return null;
+  const s = String(url).trim();
+  if (/^data:/i.test(s)) return s;
+  const photosMatch = s.match(/^https?:\/\/[^/]+(\/photos\/.*)$/i);
+  if (photosMatch) return photosMatch[1];
+  if (/^https?:\/\//i.test(s)) return s;
+  if (s.startsWith("/")) return s;
+  return `/photos/${s}`;
+}
+
+// ===================== ANALYTICS HELPERS =====================
+
+function getClientIp(req) {
+  const xf = req.headers["x-forwarded-for"];
+  if (typeof xf === "string" && xf.trim()) {
+    return xf.split(",")[0].trim();
+  }
+  return (
+    req.ip ||
+    req.connection?.remoteAddress ||
+    req.socket?.remoteAddress ||
+    "unknown"
+  );
+}
+
+function normalizeUa(ua = "") {
+  return String(ua || "").slice(0, 500);
+}
+
+function detectDeviceType(userAgent = "") {
+  const ua = String(userAgent || "").toLowerCase();
+  if (/ipad|tablet|playbook|silk/.test(ua)) return "tablet";
+  if (/mobi|android|iphone|ipod|windows phone/.test(ua)) return "mobile";
+  return "desktop";
+}
+
+function detectSource(referrer = "") {
+  const ref = String(referrer || "").toLowerCase().trim();
+  if (!ref) return "direct";
+
+  if (ref.includes("t.me") || ref.includes("telegram")) return "telegram";
+  if (ref.includes("google.")) return "google";
+  if (ref.includes("yandex.")) return "yandex";
+  if (ref.includes("vk.com")) return "vk";
+  if (ref.includes("instagram.") || ref.includes("l.instagram.")) return "instagram";
+  if (ref.includes("facebook.") || ref.includes("fb.")) return "facebook";
+  if (ref.includes("twitter.") || ref.includes("x.com")) return "x";
+  if (ref.includes("linkedin.")) return "linkedin";
+
+  return "other";
+}
+
+function safeJsonStringify(value) {
+  try {
+    return JSON.stringify(value ?? {});
+  } catch {
+    return "{}";
+  }
+}
+
+function safeJsonParse(value, fallback = {}) {
+  try {
+    return JSON.parse(value);
+  } catch {
+    return fallback;
+  }
+}
+
+function formatDurationHuman(totalSec) {
+  const sec = Math.max(0, Math.round(Number(totalSec || 0)));
+  if (!sec) return "0 сек";
+
+  const minutes = Math.floor(sec / 60);
+  const seconds = sec % 60;
+
+  if (!minutes) return `${seconds} сек`;
+  return `${minutes} мин ${String(seconds).padStart(2, "0")} сек`;
+}
+
 // ===================== SMTP НАСТРОЙКА =====================
 
 const transporter = nodemailer.createTransport({
@@ -626,6 +1303,23 @@ const transporter = nodemailer.createTransport({
 });
 
 // временное хранилище незавершённых регистраций (для dev)
+function shouldSkipEmailVerification() {
+  if (process.env.DISABLE_EMAIL_VERIFICATION === "true") return true;
+
+  const host = String(process.env.SMTP_HOST || "").trim().toLowerCase();
+  const user = String(process.env.SMTP_USER || "").trim().toLowerCase();
+  const pass = String(process.env.SMTP_PASS || "").trim();
+
+  return (
+    !host ||
+    host === "smtp.example.com" ||
+    !user ||
+    user === "user@example.com" ||
+    !pass ||
+    pass === "change-me"
+  );
+}
+
 const pendingRegistrations = new Map();
 
 // ===================== ЛОГИН =====================
@@ -694,7 +1388,27 @@ app.post("/api/login", (req, res) => {
 // ===================== РЕГИСТРАЦИЯ: ШАГ 1 =====================
 
 app.post("/api/register/start", (req, res) => {
-  const { login, password, firstName, lastName, city, email, status, hours, phone} = req.body;
+  const {
+    login,
+    password,
+    firstName,
+    lastName,
+    city,
+    email,
+    status,
+    hours,
+    phone,
+    acceptedPrivacyPolicy,
+    acceptedPersonalDataProcessing,
+  } = req.body;
+  const cityValue = String(city || "").trim();
+
+  if (!acceptedPrivacyPolicy || !acceptedPersonalDataProcessing) {
+    return res.status(400).json({
+      ok: false,
+      message: "Необходимо подтвердить оба согласия",
+    });
+  }
 
   if (!login || !password) {
     return res.status(400).json({
@@ -710,11 +1424,15 @@ app.post("/api/register/start", (req, res) => {
     });
   }
 
-  if (!cityExists(city)) {
+  if (!cityValue) {
     return res.json({
       ok: false,
       message: "Город не найден в справочнике",
     });
+  }
+
+  if (!cityExists(cityValue)) {
+    console.warn("Unknown city during registration, allowing fallback:", cityValue);
   }
 
   db.get("SELECT id FROM users WHERE login = ?", [login], (err, row) => {
@@ -741,10 +1459,36 @@ app.post("/api/register/start", (req, res) => {
       password,
       firstName,
       lastName,
-      city,
+      city: cityValue,
       email,
       status,
     };
+
+    if (shouldSkipEmailVerification()) {
+      const sql = `
+        INSERT INTO users
+          (login, password, first_name, last_name, city, email, status)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+      `;
+
+      db.run(
+        sql,
+        [login, password, firstName, lastName, cityValue, email, status],
+        function (insertErr) {
+          if (insertErr) {
+            console.error("DB error (insert user without email verification):", insertErr);
+            return res.status(500).json({
+              ok: false,
+              message: "Ошибка сервера при регистрации",
+            });
+          }
+
+          console.log(`Registration created without email verification for ${login}`);
+          return res.json({ ok: true, skipVerification: true });
+        }
+      );
+      return;
+    }
 
     pendingRegistrations.set(email, {
       code,
@@ -894,6 +1638,26 @@ app.get("/api/users/by-login/:login", (req, res) => {
   });
 });
 
+app.get("/api/articles/:id/favorite-state", (req, res) => {
+  const articleId = Number(req.params.id);
+  const userId = req.query.userId ? Number(req.query.userId) : null;
+  const userLogin = (req.query.userLogin || "").trim();
+
+  if (!Number.isInteger(articleId)) return res.status(400).json({ ok: false, message: "Invalid id" });
+  if (!userId && !userLogin) return res.json({ ok: true, isFav: false });
+
+  const sql = userId
+    ? `SELECT 1 FROM article_favorites WHERE article_id = ? AND user_id = ? LIMIT 1`
+    : `SELECT 1 FROM article_favorites WHERE article_id = ? AND user_login = ? LIMIT 1`;
+
+  const params = userId ? [articleId, userId] : [articleId, userLogin];
+
+  db.get(sql, params, (err, row) => {
+    if (err) return res.status(500).json({ ok: false, message: "DB error" });
+    return res.json({ ok: true, isFav: !!row });
+  });
+});
+
 // Обновить данные профиля
 app.put("/api/users/:id", (req, res) => {
   const id = Number(req.params.id);
@@ -998,263 +1762,330 @@ app.get("/api/cities", (req, res) => {
 // ===================== PLACES API для админки =====================
 
 // Получить все места
-app.get("/api/places", (req, res) => {
-  const status = String(req.query.status || "approved").toLowerCase();
+app.get("/api/places", async (req, res) => {
+  return withOrderLock(async () => {
+    const status = String(req.query.status || "approved").toLowerCase();
 
-  let whereSql = "WHERE COALESCE(moderation_status, 'approved') = 'approved'";
-  if (status === "all") {
-    whereSql = "";
-  } else if (status === "pending") {
-    whereSql = "WHERE COALESCE(moderation_status, 'approved') = 'pending'";
-  } else if (status === "rejected") {
-    whereSql = "WHERE COALESCE(moderation_status, 'approved') = 'rejected'";
-  }
+    let whereSql = "WHERE COALESCE(moderation_status, 'approved') = 'approved'";
+    if (status === "all") {
+      whereSql = "";
+    } else if (status === "pending") {
+      whereSql = "WHERE COALESCE(moderation_status, 'approved') = 'pending'";
+    } else if (status === "rejected") {
+      whereSql = "WHERE COALESCE(moderation_status, 'approved') = 'rejected'";
+    }
 
-  const sql = `SELECT * FROM places ${whereSql} ORDER BY id ASC`;
+    const sql = `
+      SELECT *
+      FROM places
+      ${whereSql}
+      ORDER BY COALESCE(NULLIF(display_order, 0), 2147483647) ASC, id ASC
+    `;
 
-  db.all(sql, (err, rows) => {
-    if (err) {
+    try {
+      await ensureSequentialDisplayOrders("places");
+      const rows = await dbAllAsync(sql);
+      const places = (rows || [])
+        .map(mapPlaceRow)
+        .map((place) => enrichPlaceForClient(place, req));
+
+      res.json({ ok: true, places });
+    } catch (err) {
       console.error("DB error (get places):", err);
       return res.status(500).json({
         ok: false,
         message: "Ошибка сервера при получении мест",
       });
     }
-
-    const places = (rows || [])
-      .map(mapPlaceRow)
-      .map((p) => enrichPlaceForClient(p, req));
-  
-    res.json({ ok: true, places });
   });
 });
 
 // Добавить место
-app.post("/api/places", (req, res) => {
-  const {
-    name, type, city, address, image, images, badge, rating, reviews, features, link,
-    hours, phone, 
-  } = req.body;
+app.post("/api/places", async (req, res) => {
+  return withOrderLock(async () => {
+    const {
+      name, type, city, address, displayOrder, image, images, badge, rating, reviews, features, link,
+      description, hours, phone, submittedBy: rawSubmittedBy,
+    } = req.body || {};
 
-  const nameValue = (name || "").trim();
-  const cityValue = (city || "").trim();
-  const addressValue = (address || "").trim();
-  let imageValue = typeof image === "string" ? image.trim() : "";
-  const imagesArr = Array.isArray(images) ? images.filter(Boolean) : [];
+    const nameValue = (name || "").trim();
+    const cityValue = (city || "").trim();
+    const addressValue = (address || "").trim();
+    let imageValue = typeof image === "string" ? image.trim() : "";
+    const imagesArr = Array.isArray(images) ? images.filter(Boolean) : [];
 
-  if (!nameValue) {
-    return res.json({
-      ok: false,
-      message: "Название обязательно",
-    });
-  }
-
-  if (!cityValue) {
-    return res.json({
-      ok: false,
-      message: "Город обязателен",
-    });
-  }
-
-  if (!addressValue) {
-    return res.json({
-      ok: false,
-      message: "Адрес обязателен",
-    });
-  }
-
-  if (!imageValue && imagesArr.length === 0) {
-    return res.json({
-      ok: false,
-      message: "Нужно добавить хотя бы одно фото",
-    });
-  }
-
-  if (!imageValue && imagesArr.length) {
-    imageValue = imagesArr[0];
-  }
-
-  const submittedByRaw = (req.body.submittedBy || "").trim();
-  const submittedBy = submittedByRaw || null;
-  const moderationStatus = submittedBy ? "pending" : "approved";
-  const submittedAt = submittedBy ? Math.floor(Date.now() / 1000) : null;
-
-  const featuresJson = JSON.stringify(Array.isArray(features) ? features : []);
-  const imagesJson = JSON.stringify(imagesArr);
-
-  const sql = `
-    INSERT INTO places
-      (name, type, city, address, image, images, badge, rating, reviews, features, link, hours, phone, moderation_status, submitted_by, submitted_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-  `;
-
-  db.run(
-    sql,
-    [
-      nameValue,
-      type || null,
-      cityValue || null,
-      addressValue || null,
-      imageValue || null,
-      imagesJson,
-      badge || null,
-      rating ?? null,
-      reviews ?? null,
-      featuresJson,
-      link || null,
-      hours || null,
-      phone || null,
-      moderationStatus,
-      submittedBy,
-      submittedAt,
-    ],
-    function (err) {
-      if (err) {
-        console.error("DB error (insert place):", err);
-        return res.status(500).json({
-          ok: false,
-          message: "Ошибка сервера при добавлении места",
-        });
-      }
-
-      const newId = this.lastID;
-      db.get("SELECT * FROM places WHERE id = ?", [newId], (err2, row) => {
-        if (err2 || !row) {
-          return res.json({ ok: true }); // добавили, но не смогли вернуть
-        }
-        if (moderationStatus === "pending") {
-          const lines = [
-            "Новое место на модерации",
-            `Название: ${row.name || ""}`,
-            `Город: ${row.city || ""}`,
-            `Адрес: ${row.address || ""}`,
-            submittedBy ? `Отправил: ${submittedBy}` : "",
-            `ID: ${row.id}`,
-          ].filter(Boolean);
-          void sendTelegramMessage(lines.join("\n"));
-        }
-        res.json({
-          ok: true,
-          place: mapPlaceRow(row),
-        });
+    if (!nameValue) {
+      return res.json({
+        ok: false,
+        message: "Название обязательно",
       });
     }
-  );
+
+    if (!cityValue) {
+      return res.json({
+        ok: false,
+        message: "Город обязателен",
+      });
+    }
+
+    if (!addressValue) {
+      return res.json({
+        ok: false,
+        message: "Адрес обязателен",
+      });
+    }
+
+    if (!imageValue && imagesArr.length === 0) {
+      return res.json({
+        ok: false,
+        message: "Нужно добавить хотя бы одно фото",
+      });
+    }
+
+    if (!imageValue && imagesArr.length) {
+      imageValue = imagesArr[0];
+    }
+
+    const submittedByRaw = (rawSubmittedBy || "").trim();
+    const submittedBy = submittedByRaw || null;
+    const moderationStatus = submittedBy ? "pending" : "approved";
+    const submittedAt = submittedBy ? Math.floor(Date.now() / 1000) : null;
+    const requestedOrder = parseDisplayOrder(displayOrder);
+    const coordinates = await resolvePlaceCoordinates({
+      city: cityValue,
+      address: addressValue,
+      link,
+    });
+
+    const featuresJson = JSON.stringify(Array.isArray(features) ? features : []);
+    const imagesJson = JSON.stringify(imagesArr);
+
+    const sql = `
+      INSERT INTO places
+        (name, type, city, address, display_order, image, images, badge, rating, reviews, features, link, latitude, longitude, description, hours, phone, moderation_status, submitted_by, submitted_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `;
+
+    try {
+      await ensureSequentialDisplayOrders("places");
+
+      const newId = await withTransaction(async () => {
+        const targetOrder = await allocateDisplayOrderOnInsert("places", requestedOrder);
+        const result = await dbRunAsync(sql, [
+          nameValue,
+          type || null,
+          cityValue || null,
+          addressValue || null,
+          targetOrder,
+          imageValue || null,
+          imagesJson,
+          badge || null,
+          rating ?? null,
+          reviews ?? null,
+          featuresJson,
+          link || null,
+          coordinates?.latitude ?? null,
+          coordinates?.longitude ?? null,
+          description || null,
+          hours || null,
+          phone || null,
+          moderationStatus,
+          submittedBy,
+          submittedAt,
+        ]);
+        return result.lastID;
+      });
+
+      const row = await dbGetAsync("SELECT * FROM places WHERE id = ?", [newId]);
+      if (!row) {
+        return res.json({ ok: true });
+      }
+
+      if (moderationStatus === "pending") {
+        const lines = [
+          "Новое место на модерации",
+          `Название: ${row.name || ""}`,
+          `Город: ${row.city || ""}`,
+          `Адрес: ${row.address || ""}`,
+          submittedBy ? `Отправил: ${submittedBy}` : "",
+          `ID: ${row.id}`,
+        ].filter(Boolean);
+        void sendTelegramMessage(lines.join("\n"));
+      }
+
+      return res.json({
+        ok: true,
+        place: mapPlaceRow(row),
+      });
+    } catch (err) {
+      console.error("DB error (insert place):", err);
+      return res.status(500).json({
+        ok: false,
+        message: "Ошибка сервера при добавлении места",
+      });
+    }
+  });
 });
 
 // Обновить место
-app.put("/api/places/:id", (req, res) => {
-  const id = Number(req.params.id);
-  if (!Number.isInteger(id)) {
-    return res.json({
-      ok: false,
-      message: "Некорректный id",
+app.put("/api/places/:id", async (req, res) => {
+  return withOrderLock(async () => {
+    const id = Number(req.params.id);
+    if (!Number.isInteger(id)) {
+      return res.json({
+        ok: false,
+        message: "Некорректный id",
+      });
+    }
+
+    const {
+      name, type, city, address, displayOrder, image, images, badge, rating, reviews, features, link,
+      description, hours, phone,
+    } = req.body || {};
+
+    if (!name || !name.trim()) {
+      return res.json({
+        ok: false,
+        message: "Название обязательно",
+      });
+    }
+
+    const featuresJson = JSON.stringify(Array.isArray(features) ? features : []);
+    const imagesJson = JSON.stringify(Array.isArray(images) ? images : []);
+    const requestedOrder = parseDisplayOrder(displayOrder);
+    const coordinates = await resolvePlaceCoordinates({
+      city,
+      address,
+      link,
     });
-  }
 
-  const {
-    name, type, city, address, image, images, badge, rating, reviews, features, link,
-    hours, phone, 
-  } = req.body;
+    const sql = `
+      UPDATE places
+      SET
+        name = ?,
+        type = ?,
+        city = ?,
+        address = ?,
+        display_order = ?,
+        image = ?,
+        images = ?,
+        badge = ?,
+        rating = ?,
+        reviews = ?,
+        features = ?,
+        link = ?,
+        latitude = ?,
+        longitude = ?,
+        description = ?,
+        hours = ?,
+        phone = ?
+      WHERE id = ?
+    `;
 
-  if (!name || !name.trim()) {
-    return res.json({
-      ok: false,
-      message: "Название обязательно",
-    });
-  }
+    try {
+      await ensureSequentialDisplayOrders("places");
+      const existing = await dbGetAsync("SELECT * FROM places WHERE id = ?", [id]);
 
-  const featuresJson = JSON.stringify(Array.isArray(features) ? features : []);
-  const imagesJson = JSON.stringify(Array.isArray(images) ? images : []);
-
-  const sql = `
-    UPDATE places
-    SET
-      name = ?,
-      type = ?,
-      city = ?,
-      address = ?,
-      image = ?,
-      images = ?,
-      badge = ?,
-      rating = ?,
-      reviews = ?,
-      features = ?,
-      link = ?,
-      hours = ?,
-      phone = ?
-    WHERE id = ?
-  `;
-
-  db.run(
-    sql,
-    [
-      name.trim(),
-      type || null,
-      city || null,
-      address || null,
-      image || null,
-      imagesJson,
-      badge || null,
-      rating ?? null,
-      reviews ?? null,
-      featuresJson,
-      link || null,
-      hours || null,
-      phone || null,
-      id,
-    ],
-    function (err) {
-      if (err) {
-        console.error("DB error (update place):", err);
-        return res.status(500).json({
-          ok: false,
-          message: "Ошибка сервера при обновлении места",
-        });
-      }
-
-      if (this.changes === 0) {
+      if (!existing) {
         return res.json({
           ok: false,
           message: "Место не найдено",
         });
       }
 
-      db.get("SELECT * FROM places WHERE id = ?", [id], (err2, row) => {
-        if (err2 || !row) {
-          return res.json({ ok: true });
+      await withTransaction(async () => {
+        const targetOrder = await moveDisplayOrder("places", id, existing.display_order, requestedOrder);
+        const result = await dbRunAsync(sql, [
+          name.trim(),
+          type || null,
+          city || null,
+          address || null,
+          targetOrder,
+          image || null,
+          imagesJson,
+          badge || null,
+          rating ?? null,
+          reviews ?? null,
+          featuresJson,
+          link || null,
+          coordinates?.latitude ?? existing.latitude ?? null,
+          coordinates?.longitude ?? existing.longitude ?? null,
+          description || null,
+          hours || null,
+          phone || null,
+          id,
+        ]);
+
+        if (result.changes === 0) {
+          throw new Error("PLACE_NOT_FOUND");
         }
-        const place = mapPlaceRow(row);
-        res.json({
-          ok: true,
-          place: enrichPlaceForClient(place, req),
+      });
+
+      const row = await dbGetAsync("SELECT * FROM places WHERE id = ?", [id]);
+      if (!row) {
+        return res.json({ ok: true });
+      }
+
+      const place = mapPlaceRow(row);
+      return res.json({
+        ok: true,
+        place: enrichPlaceForClient(place, req),
+      });
+    } catch (err) {
+      if (err?.message === "PLACE_NOT_FOUND") {
+        return res.json({
+          ok: false,
+          message: "Место не найдено",
         });
+      }
+
+      console.error("DB error (update place):", err);
+      return res.status(500).json({
+        ok: false,
+        message: "Ошибка сервера при обновлении места",
       });
     }
-  );
+  });
 });
 
 // Одобрить место (модерация)
-app.post("/api/places/:id/approve", (req, res) => {
+app.post("/api/places/:id/approve", async (req, res) => {
   const id = Number(req.params.id);
   if (!Number.isInteger(id)) {
     return res.status(400).json({ ok: false, message: "Invalid id" });
   }
 
-  db.run(
-    "UPDATE places SET moderation_status = 'approved' WHERE id = ?",
-    [id],
-    function (err) {
-      if (err) {
-        console.error("DB error (approve place):", err);
-        return res.status(500).json({ ok: false, message: "DB error" });
-      }
-      if (this.changes === 0) {
-        return res.status(404).json({ ok: false, message: "Place not found" });
-      }
-      return res.json({ ok: true });
+  try {
+    const row = await dbGetAsync("SELECT * FROM places WHERE id = ?", [id]);
+    if (!row) {
+      return res.status(404).json({ ok: false, message: "Place not found" });
     }
-  );
+
+    const hasCoordinates =
+      parseFiniteCoordinate(row.latitude) !== null &&
+      parseFiniteCoordinate(row.longitude) !== null;
+
+    const coordinates = hasCoordinates
+      ? {
+          latitude: parseFiniteCoordinate(row.latitude),
+          longitude: parseFiniteCoordinate(row.longitude),
+        }
+      : await resolvePlaceCoordinates({
+          city: row.city,
+          address: row.address,
+          link: row.link,
+        });
+
+    await dbRunAsync(
+      "UPDATE places SET moderation_status = 'approved', latitude = ?, longitude = ? WHERE id = ?",
+      [coordinates?.latitude ?? row.latitude ?? null, coordinates?.longitude ?? row.longitude ?? null, id]
+    );
+
+    return res.json({ ok: true });
+  } catch (err) {
+    console.error("DB error (approve place):", err);
+    return res.status(500).json({ ok: false, message: "DB error" });
+  }
 });
 
 // Отклонить место (модерация)
@@ -1281,32 +2112,50 @@ app.post("/api/places/:id/reject", (req, res) => {
 });
 
 // Удалить место
-app.delete("/api/places/:id", (req, res) => {
-  const id = Number(req.params.id);
-  if (!Number.isInteger(id)) {
-    return res.json({
-      ok: false,
-      message: "Некорректный id",
-    });
-  }
+app.delete("/api/places/:id", async (req, res) => {
+  return withOrderLock(async () => {
+    const id = Number(req.params.id);
+    if (!Number.isInteger(id)) {
+      return res.json({
+        ok: false,
+        message: "Некорректный id",
+      });
+    }
 
-  db.run("DELETE FROM places WHERE id = ?", [id], function (err) {
-    if (err) {
+    try {
+      await ensureSequentialDisplayOrders("places");
+      const existing = await dbGetAsync("SELECT id, display_order FROM places WHERE id = ?", [id]);
+
+      if (!existing) {
+        return res.json({
+          ok: false,
+          message: "Место не найдено",
+        });
+      }
+
+      await withTransaction(async () => {
+        const result = await dbRunAsync("DELETE FROM places WHERE id = ?", [id]);
+        if (result.changes === 0) {
+          throw new Error("PLACE_NOT_FOUND");
+        }
+        await closeDisplayOrderGap("places", existing.display_order);
+      });
+
+      return res.json({ ok: true });
+    } catch (err) {
+      if (err?.message === "PLACE_NOT_FOUND") {
+        return res.json({
+          ok: false,
+          message: "Место не найдено",
+        });
+      }
+
       console.error("DB error (delete place):", err);
       return res.status(500).json({
         ok: false,
         message: "Ошибка сервера при удалении места",
       });
     }
-
-    if (this.changes === 0) {
-      return res.json({
-        ok: false,
-        message: "Место не найдено",
-      });
-    }
-
-    res.json({ ok: true });
   });
 });
 
@@ -1359,6 +2208,7 @@ app.get("/api/places/:id/reviews", (req, res) => {
         r.user_name,
         r.rating,
         r.text,
+        r.images,
         r.created_at,
         COALESCE(u1.avatar, u2.avatar) AS user_avatar
       FROM place_reviews r
@@ -1407,10 +2257,15 @@ app.post("/api/places/:id/reviews", (req, res) => {
     return res.status(400).json({ ok: false, message: "Invalid id" });
   }
 
-  const { userLogin, userId, text, rating } = req.body || {};
-  const safeUserId = Number.isInteger(Number(userId)) ? Number(userId) : null;
+  const { userLogin, text, rating, images } = req.body || {};
   const normalizedText = (text || "").trim();
   const ratingNumber = Number(rating);
+  const imagesArray = Array.isArray(images)
+    ? images
+        .filter((item) => typeof item === "string" && item.trim())
+        .slice(0, 10)
+    : [];
+  const imagesJson = JSON.stringify(imagesArray);
 
   if (!normalizedText) {
     return res
@@ -1433,90 +2288,1225 @@ app.post("/api/places/:id/reviews", (req, res) => {
     if (!placeRow) {
       return res.status(404).json({ ok: false, message: "Place not found" });
     }
-    
-    // ✅ Подтянем актуальное имя/фамилию пользователя из users
-    const resolveUserSql = safeUserId
-      ? "SELECT id, login, first_name, last_name, avatar FROM users WHERE id = ?"
-      : "SELECT id, login, first_name, last_name, avatar FROM users WHERE login = ?";
 
-    const resolveUserParam = safeUserId ? safeUserId : (userLogin || null);
-
-    db.get(resolveUserSql, [resolveUserParam], (userErr, userRow) => {
-      if (userErr) {
-        console.error("DB error (resolve user for review):", userErr);
+    resolveRequestUser(req, (requestErr, requester) => {
+      if (requestErr) {
+        console.error("DB error (resolve requester for review):", requestErr);
         return res.status(500).json({ ok: false, message: "DB error" });
       }
 
-      // если юзер не найден — оставим как аноним (или как пришёл login)
-      const finalUserId = userRow?.id ?? null;
-      const finalUserLogin = userRow?.login ?? (userLogin || null);
+      const duplicateConditions = [];
+      const duplicateParams = [placeId];
 
-      const displayName = [userRow?.first_name, userRow?.last_name]
-        .filter(Boolean)
-        .join(" ")
-        .trim();
+      if (requester.id) {
+        duplicateConditions.push("user_id = ?");
+        duplicateParams.push(requester.id);
+      }
 
-      const finalUserName = displayName || finalUserLogin || "Аноним";
+      if (requester.login) {
+        duplicateConditions.push("user_login = ?");
+        duplicateParams.push(requester.login);
+      }
 
-      const createdAt = Math.floor(Date.now() / 1000);
-      const insertSql = `
-        INSERT INTO place_reviews (place_id, user_id, user_login, user_name, rating, text, created_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?)
-      `;
+      const checkDuplicateAndContinue = (next) => {
+        if (requester.isAdmin || !duplicateConditions.length) {
+          return next(null, false);
+        }
 
-      db.run(
-        insertSql,
-        [placeId, finalUserId, finalUserLogin, finalUserName, ratingNumber, normalizedText, createdAt],
-        function (err) {
-          if (err) {
-            console.error("DB error (insert review):", err);
+        const checkSql = `
+          SELECT id
+          FROM place_reviews
+          WHERE place_id = ? AND (${duplicateConditions.join(" OR ")})
+          LIMIT 1
+        `;
+
+        db.get(checkSql, duplicateParams, (dupErr, dupRow) => {
+          if (dupErr) {
+            console.error("DB error (check duplicate review):", dupErr);
+            return next(dupErr);
+          }
+
+          return next(null, Boolean(dupRow));
+        });
+      };
+
+      checkDuplicateAndContinue((dupErr, hasDuplicate) => {
+        if (dupErr) {
+          return res.status(500).json({ ok: false, message: "DB error" });
+        }
+
+        if (hasDuplicate) {
+          return res.status(409).json({
+            ok: false,
+            message: "You already left a review for this place. Edit the existing one.",
+          });
+        }
+
+        const resolveUserSql = requester.id
+          ? "SELECT id, login, first_name, last_name, avatar FROM users WHERE id = ?"
+          : "SELECT id, login, first_name, last_name, avatar FROM users WHERE login = ?";
+        const resolveUserParam = requester.id || requester.login || null;
+
+        if (!resolveUserParam) {
+          return res.status(400).json({ ok: false, message: "User is required" });
+        }
+
+        db.get(resolveUserSql, [resolveUserParam], (userErr, userRow) => {
+          if (userErr) {
+            console.error("DB error (resolve user for review):", userErr);
             return res.status(500).json({ ok: false, message: "DB error" });
           }
 
-          const newId = this.lastID;
-          const fetchSql = `
-            SELECT
-              r.id,
-              r.place_id,
-              r.user_id,
-              r.user_login,
-              r.user_name,
-              r.rating,
-              r.text,
-              r.created_at,
-              COALESCE(u1.avatar, u2.avatar) AS user_avatar
-            FROM place_reviews r
-            LEFT JOIN users u1 ON u1.id = r.user_id
-            LEFT JOIN users u2 ON (r.user_id IS NULL AND u2.login = r.user_login)
-            WHERE r.id = ?
-            LIMIT 1
+          const finalUserId = userRow?.id ?? null;
+          const finalUserLogin = userRow?.login ?? requester.login ?? (userLogin || null);
+
+          const displayName = [userRow?.first_name, userRow?.last_name]
+            .filter(Boolean)
+            .join(" ")
+            .trim();
+
+          const finalUserName = displayName || finalUserLogin || "Anonymous";
+
+          const createdAt = Math.floor(Date.now() / 1000);
+          const insertSql = `
+            INSERT INTO place_reviews (place_id, user_id, user_login, user_name, rating, text, images, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
           `;
-          
-          db.get(fetchSql, [newId], (getErr, row) => {
-            if (getErr) {
-              console.error("DB error (fetch new review):", getErr);
-              return res.status(500).json({ ok: false, message: "DB error" });
-            }
-          
-            recalcPlaceRating(placeId, (recalcErr, stats) => {
-              if (recalcErr) console.error("DB error (recalc after review insert):", recalcErr);
-          
-              res.json({
-                ok: true,
-                review: row ? mapReviewRow(row, req) : null, // ✅ avatar вернётся сразу
-                stats: stats || null,
+
+          db.run(
+            insertSql,
+            [placeId, finalUserId, finalUserLogin, finalUserName, ratingNumber, normalizedText, imagesJson, createdAt],
+            function (err) {
+              if (err) {
+                if (err.code === "SQLITE_CONSTRAINT") {
+                  return res.status(409).json({
+                    ok: false,
+                    message: "You already left a review for this place. Edit the existing one.",
+                  });
+                }
+
+                console.error("DB error (insert review):", err);
+                return res.status(500).json({ ok: false, message: "DB error" });
+              }
+
+              const newId = this.lastID;
+              const fetchSql = `
+                SELECT
+                  r.id,
+                  r.place_id,
+                  r.user_id,
+                  r.user_login,
+                  r.user_name,
+                  r.rating,
+                  r.text,
+                  r.images,
+                  r.created_at,
+                  COALESCE(u1.avatar, u2.avatar) AS user_avatar
+                FROM place_reviews r
+                LEFT JOIN users u1 ON u1.id = r.user_id
+                LEFT JOIN users u2 ON (r.user_id IS NULL AND u2.login = r.user_login)
+                WHERE r.id = ?
+                LIMIT 1
+              `;
+
+              db.get(fetchSql, [newId], (getErr, row) => {
+                if (getErr) {
+                  console.error("DB error (fetch new review):", getErr);
+                  return res.status(500).json({ ok: false, message: "DB error" });
+                }
+
+                recalcPlaceRating(placeId, (recalcErr, stats) => {
+                  if (recalcErr) console.error("DB error (recalc after review insert):", recalcErr);
+
+                  res.json({
+                    ok: true,
+                    review: row ? mapReviewRow(row, req) : null,
+                    stats: stats || null,
+                  });
+                });
               });
+            }
+          );
+        });
+      });
+    });
+
+    return;
+  });
+});
+
+app.put("/api/places/:placeId/reviews/:reviewId", (req, res) => {
+  const placeId = Number(req.params.placeId);
+  const reviewId = Number(req.params.reviewId);
+  if (!Number.isInteger(placeId) || !Number.isInteger(reviewId)) {
+    return res.status(400).json({ ok: false, message: "Invalid id" });
+  }
+
+  const { text, rating, images } = req.body || {};
+  const updates = [];
+  const params = [];
+
+  if (typeof text === "string") {
+    const normalizedText = text.trim();
+    if (!normalizedText) {
+      return res.status(400).json({ ok: false, message: "Review text is required" });
+    }
+    updates.push("text = ?");
+    params.push(normalizedText);
+  }
+
+  if (rating !== undefined) {
+    const ratingNumber = Number(rating);
+    if (!Number.isInteger(ratingNumber) || ratingNumber < 1 || ratingNumber > 5) {
+      return res.status(400).json({ ok: false, message: "Rating must be from 1 to 5" });
+    }
+    updates.push("rating = ?");
+    params.push(ratingNumber);
+  }
+
+  if (images !== undefined) {
+    const imagesArray = Array.isArray(images)
+      ? images
+          .filter((item) => typeof item === "string" && item.trim())
+          .slice(0, 10)
+      : [];
+    updates.push("images = ?");
+    params.push(JSON.stringify(imagesArray));
+  }
+
+  if (!updates.length) {
+    return res.status(400).json({ ok: false, message: "Nothing to update" });
+  }
+
+  const sql = `
+    UPDATE place_reviews
+    SET ${updates.join(", ")}
+    WHERE id = ? AND place_id = ?
+  `;
+  params.push(reviewId, placeId);
+
+  resolveRequestUser(req, (userErr, requester) => {
+    if (userErr) {
+      console.error("DB error (resolve review user):", userErr);
+      return res.status(500).json({ ok: false, message: "DB error" });
+    }
+
+    const reviewSql = `
+      SELECT id, user_id, user_login
+      FROM place_reviews
+      WHERE id = ? AND place_id = ?
+      LIMIT 1
+    `;
+
+    db.get(reviewSql, [reviewId, placeId], (reviewErr, reviewRow) => {
+      if (reviewErr) {
+        console.error("DB error (get review for update):", reviewErr);
+        return res.status(500).json({ ok: false, message: "DB error" });
+      }
+
+      if (!reviewRow) {
+        return res.status(404).json({ ok: false, message: "Review not found" });
+      }
+
+      const isOwner =
+        (requester.id && reviewRow.user_id && requester.id === reviewRow.user_id) ||
+        (requester.login && reviewRow.user_login && requester.login === reviewRow.user_login);
+
+      if (!requester.isAdmin && !isOwner) {
+        return res.status(403).json({ ok: false, message: "Not enough permissions" });
+      }
+
+      db.run(sql, params, function (err) {
+        if (err) {
+          console.error("DB error (update review):", err);
+          return res.status(500).json({ ok: false, message: "DB error" });
+        }
+
+        if (this.changes === 0) {
+          return res.status(404).json({ ok: false, message: "Review not found" });
+        }
+
+        const fetchSql = `
+          SELECT
+            r.id,
+            r.place_id,
+            r.user_id,
+            r.user_login,
+            r.user_name,
+            r.rating,
+            r.text,
+            r.images,
+            r.created_at,
+            COALESCE(u1.avatar, u2.avatar) AS user_avatar
+          FROM place_reviews r
+          LEFT JOIN users u1 ON u1.id = r.user_id
+          LEFT JOIN users u2 ON (r.user_id IS NULL AND u2.login = r.user_login)
+          WHERE r.id = ? AND r.place_id = ?
+          LIMIT 1
+        `;
+
+        db.get(fetchSql, [reviewId, placeId], (getErr, row) => {
+          if (getErr) {
+            console.error("DB error (fetch updated review):", getErr);
+            return res.status(500).json({ ok: false, message: "DB error" });
+          }
+
+          recalcPlaceRating(placeId, (recalcErr, stats) => {
+            if (recalcErr) console.error("DB error (recalc after review update):", recalcErr);
+            return res.json({
+              ok: true,
+              review: row ? mapReviewRow(row, req) : null,
+              stats: stats || null,
+            });
+          });
+        });
+      });
+    });
+  });
+});
+
+app.delete("/api/places/:placeId/reviews/:reviewId", (req, res) => {
+  const placeId = Number(req.params.placeId);
+  const reviewId = Number(req.params.reviewId);
+  if (!Number.isInteger(placeId) || !Number.isInteger(reviewId)) {
+    return res.status(400).json({ ok: false, message: "Invalid id" });
+  }
+
+  resolveRequestUser(req, (userErr, requester) => {
+    if (userErr) {
+      console.error("DB error (resolve review user):", userErr);
+      return res.status(500).json({ ok: false, message: "DB error" });
+    }
+
+    const reviewSql = `
+      SELECT id, user_id, user_login
+      FROM place_reviews
+      WHERE id = ? AND place_id = ?
+      LIMIT 1
+    `;
+
+    db.get(reviewSql, [reviewId, placeId], (reviewErr, reviewRow) => {
+      if (reviewErr) {
+        console.error("DB error (get review for delete):", reviewErr);
+        return res.status(500).json({ ok: false, message: "DB error" });
+      }
+
+      if (!reviewRow) {
+        return res.status(404).json({ ok: false, message: "Review not found" });
+      }
+
+      const isOwner =
+        (requester.id && reviewRow.user_id && requester.id === reviewRow.user_id) ||
+        (requester.login && reviewRow.user_login && requester.login === reviewRow.user_login);
+
+      if (!requester.isAdmin && !isOwner) {
+        return res.status(403).json({ ok: false, message: "Not enough permissions" });
+      }
+
+      db.run(
+        "DELETE FROM place_reviews WHERE id = ? AND place_id = ?",
+        [reviewId, placeId],
+        function (err) {
+          if (err) {
+            console.error("DB error (delete review):", err);
+            return res.status(500).json({ ok: false, message: "DB error" });
+          }
+
+          if (this.changes === 0) {
+            return res.status(404).json({ ok: false, message: "Review not found" });
+          }
+
+          recalcPlaceRating(placeId, (recalcErr, stats) => {
+            if (recalcErr) console.error("DB error (recalc after review delete):", recalcErr);
+            return res.json({
+              ok: true,
+              stats: stats || null,
             });
           });
         }
       );
     });
-
-    return; // важно: чтобы код ниже не продолжал выполняться
   });
 });
 
-// ===================== СТАРТ СЕРВЕРА =====================
+// ===================== ARTICLES API =====================
+
+// Публичный список статей (approved) + можно запросить draft/pending для профиля/админки
+app.get("/api/articles", async (req, res) => {
+  return withOrderLock(async () => {
+    const status = String(req.query.status || "approved").toLowerCase();
+    const authorId = req.query.authorId ? Number(req.query.authorId) : null;
+    const authorLogin = (req.query.authorLogin || "").trim();
+
+    let where = "WHERE a.status = 'approved'";
+    const params = [];
+
+    if (status === "all") {
+      where = "";
+    } else if (["approved", "pending", "rejected", "draft"].includes(status)) {
+      where = "WHERE a.status = ?";
+      params.push(status);
+    }
+
+    if ((authorId && Number.isFinite(authorId)) || authorLogin) {
+      where = where ? `${where} AND` : "WHERE";
+      if (authorId && Number.isFinite(authorId)) {
+        where += " a.author_id = ?";
+        params.push(authorId);
+      } else {
+        where += " a.author_login = ?";
+        params.push(authorLogin);
+      }
+    }
+
+    const sql = `
+      SELECT
+        a.*,
+        u.first_name AS author_first_name,
+        u.last_name AS author_last_name,
+        u.avatar AS author_avatar
+      FROM articles a
+      LEFT JOIN users u
+        ON (u.id = a.author_id OR u.login = a.author_login)
+      ${where}
+      ORDER BY COALESCE(NULLIF(a.display_order, 0), 2147483647) ASC, a.published_at DESC, a.created_at DESC, a.id DESC
+    `;
+
+    try {
+      await ensureSequentialDisplayOrders("articles");
+      const rows = await dbAllAsync(sql, params);
+
+      const list = (rows || []).map((row) => {
+        const article = mapArticleRow(row, req);
+        return {
+          ...article,
+          coverImage: normalizeArticleMedia(article.coverImage),
+        };
+      });
+
+      return res.json({ ok: true, articles: list });
+    } catch (err) {
+      console.error("DB error (get articles):", err);
+      return res.status(500).json({ ok: false, message: "DB error" });
+    }
+  });
+});
+
+// Получить 1 статью
+app.get("/api/articles/:id", (req, res) => {
+  const id = Number(req.params.id);
+  if (!Number.isInteger(id)) return res.status(400).json({ ok: false, message: "Invalid id" });
+
+  const sql = `
+    SELECT
+      a.*,
+      u.first_name AS author_first_name,
+      u.last_name AS author_last_name,
+      u.avatar AS author_avatar
+    FROM articles a
+    LEFT JOIN users u
+      ON (u.id = a.author_id OR u.login = a.author_login)
+    WHERE a.id = ?
+    LIMIT 1
+  `;
+
+  db.get(sql, [id], (err, row) => {
+    if (err) {
+      console.error("DB error (get article):", err);
+      return res.status(500).json({ ok: false, message: "DB error" });
+    }
+    if (!row) return res.status(404).json({ ok: false, message: "Not found" });
+
+    const article = mapArticleRow(row, req);
+    article.coverImage = normalizeArticleMedia(article.coverImage);
+
+    const status = article.status;
+    if (status === "approved") return res.json({ ok: true, article });
+
+    const userId = req.query.userId ? Number(req.query.userId) : null;
+    const userLogin = (req.query.userLogin || "").trim();
+
+    const isAdmin = userLogin === "admin";
+    const isOwner =
+      (userId && article.authorId && userId === article.authorId) ||
+      (userLogin && article.authorLogin && userLogin === article.authorLogin);
+
+    if (!isAdmin && !isOwner) {
+      return res.status(403).json({ ok: false, message: "Forbidden" });
+    }
+
+    return res.json({ ok: true, article });
+  });
+});
+
+// Создать/обновить черновик или отправить на модерацию
+// body: { title, coverImage, content, excerpt?, action: "draft"|"submit", userId, userLogin }
+app.post("/api/articles", async (req, res) => {
+  return withOrderLock(async () => {
+    const { title, coverImage, content, excerpt, action } = req.body || {};
+    const titleValue = String(title || "").trim();
+    const cover = normalizeArticleMedia(coverImage);
+
+    let blocks = [];
+    try {
+      blocks = Array.isArray(content) ? content : JSON.parse(content || "[]");
+    } catch {
+      blocks = [];
+    }
+
+    try {
+      const requester = await resolveRequestUserAsync(req);
+      if (!requester.login || requester.login === "admin") {
+        return res.status(403).json({ ok: false, message: "Only authorized users can create articles" });
+      }
+
+      if (!titleValue) return res.json({ ok: false, message: "Заголовок обязателен" });
+
+      if (String(action || "draft") === "submit" && !cover) {
+        return res.json({ ok: false, code: "NO_COVER", message: "Нужна обложка" });
+      }
+
+      const status = String(action || "draft") === "submit" ? "pending" : "draft";
+      const now = Math.floor(Date.now() / 1000);
+      const sql = `
+        INSERT INTO articles
+          (title, cover_image, content_json, excerpt, status, display_order, author_id, author_login, submitted_at, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `;
+
+      await ensureSequentialDisplayOrders("articles");
+
+      const newId = await withTransaction(async () => {
+        const targetOrder = await allocateDisplayOrderOnInsert("articles", null);
+        const result = await dbRunAsync(sql, [
+          titleValue,
+          cover || "",
+          JSON.stringify(blocks || []),
+          String(excerpt || "").slice(0, 280),
+          status,
+          targetOrder,
+          requester.id ?? null,
+          requester.login,
+          status === "pending" ? now : null,
+          now,
+          now,
+        ]);
+        return result.lastID;
+      });
+
+      if (status === "pending") {
+        const lines = [
+          "Новая статья на модерации",
+          `Заголовок: ${titleValue}`,
+          `Автор: ${requester.login}`,
+          `ID: ${newId}`,
+        ];
+        void sendTelegramMessage(lines.join("\n"));
+      }
+
+      return res.json({ ok: true, id: newId });
+    } catch (err) {
+      console.error("DB error (insert article):", err);
+      return res.status(500).json({ ok: false, message: "DB error" });
+    }
+  });
+});
+
+// Редактировать статью (черновик/ожидание) — автор или админ
+app.put("/api/articles/:id", async (req, res) => {
+  return withOrderLock(async () => {
+    const id = Number(req.params.id);
+    if (!Number.isInteger(id)) return res.status(400).json({ ok: false, message: "Invalid id" });
+
+    const { title, coverImage, content, excerpt, status, displayOrder } = req.body || {};
+
+    let blocks = [];
+    try {
+      blocks = Array.isArray(content) ? content : JSON.parse(content || "[]");
+    } catch {
+      blocks = [];
+    }
+
+    const titleValue = String(title || "").trim();
+    const cover = normalizeArticleMedia(coverImage);
+
+    try {
+      const requester = await resolveRequestUserAsync(req);
+      await ensureSequentialDisplayOrders("articles");
+
+      const row = await dbGetAsync("SELECT * FROM articles WHERE id = ? LIMIT 1", [id]);
+      if (!row) return res.status(404).json({ ok: false, message: "Not found" });
+
+      const existing = mapArticleRow(row);
+      const isAdmin = requester.login === "admin";
+      const isOwner =
+        (requester.id && existing.authorId && requester.id === existing.authorId) ||
+        (requester.login && existing.authorLogin && requester.login === existing.authorLogin);
+
+      if (!isAdmin && !isOwner) return res.status(403).json({ ok: false, message: "Forbidden" });
+
+      const nextStatus = isAdmin && status ? String(status) : existing.status;
+      const requestedOrder = isAdmin ? parseDisplayOrder(displayOrder) : existing.displayOrder;
+      const finalCover = cover || existing.coverImage || "";
+
+      if (nextStatus === "approved" && !finalCover) {
+        return res.json({ ok: false, code: "NO_COVER", message: "Нужна обложка" });
+      }
+
+      const now = Math.floor(Date.now() / 1000);
+      const publishedAt = nextStatus === "approved" ? (existing.publishedAt || now) : existing.publishedAt;
+
+      const updateSql = `
+        UPDATE articles SET
+          title = ?,
+          cover_image = ?,
+          content_json = ?,
+          excerpt = ?,
+          status = ?,
+          display_order = ?,
+          published_at = ?,
+          updated_at = ?
+        WHERE id = ?
+      `;
+
+      await withTransaction(async () => {
+        const targetOrder = await moveDisplayOrder("articles", id, existing.displayOrder, requestedOrder);
+        await dbRunAsync(updateSql, [
+          titleValue || existing.title,
+          normalizeArticleMedia(finalCover),
+          JSON.stringify(blocks || existing.content || []),
+          String(excerpt || existing.excerpt || "").slice(0, 280),
+          nextStatus,
+          targetOrder,
+          publishedAt,
+          now,
+          id,
+        ]);
+      });
+
+      return res.json({ ok: true });
+    } catch (err) {
+      console.error("DB error (update article):", err);
+      return res.status(500).json({ ok: false, message: "DB error" });
+    }
+  });
+});
+
+// Модерация: approve/reject отдельными кнопками
+app.post("/api/articles/:id/approve", (req, res) => {
+  const id = Number(req.params.id);
+  if (!Number.isInteger(id)) return res.status(400).json({ ok: false, message: "Invalid id" });
+
+  resolveRequestUser(req, (uErr, requester) => {
+    if (uErr) return res.status(500).json({ ok: false, message: "DB error" });
+    if (requester.login !== "admin") return res.status(403).json({ ok: false, message: "Forbidden" });
+
+    const now = Math.floor(Date.now() / 1000);
+    db.run(
+      "UPDATE articles SET status='approved', published_at=COALESCE(published_at, ?), updated_at=? WHERE id=?",
+      [now, now, id],
+      function (err) {
+        if (err) return res.status(500).json({ ok: false, message: "DB error" });
+        if (!this.changes) return res.status(404).json({ ok: false, message: "Not found" });
+        return res.json({ ok: true });
+      }
+    );
+  });
+});
+
+app.post("/api/articles/:id/reject", (req, res) => {
+  const id = Number(req.params.id);
+  if (!Number.isInteger(id)) return res.status(400).json({ ok: false, message: "Invalid id" });
+
+  resolveRequestUser(req, (uErr, requester) => {
+    if (uErr) return res.status(500).json({ ok: false, message: "DB error" });
+    if (requester.login !== "admin") return res.status(403).json({ ok: false, message: "Forbidden" });
+
+    const now = Math.floor(Date.now() / 1000);
+    db.run(
+      "UPDATE articles SET status='rejected', updated_at=? WHERE id=?",
+      [now, id],
+      function (err) {
+        if (err) return res.status(500).json({ ok: false, message: "DB error" });
+        if (!this.changes) return res.status(404).json({ ok: false, message: "Not found" });
+        return res.json({ ok: true });
+      }
+    );
+  });
+});
+
+// ===================== ARTICLE COMMENTS =====================
+app.get("/api/articles/:id/comments", (req, res) => {
+  const articleId = Number(req.params.id);
+  if (!Number.isInteger(articleId)) {
+    return res.status(400).json({ ok: false, message: "Invalid id" });
+  }
+
+  const sql = `
+    SELECT
+      c.*,
+      COALESCE(u1.avatar, u2.avatar) AS user_avatar
+    FROM article_comments c
+    LEFT JOIN users u1 ON u1.id = c.user_id
+    LEFT JOIN users u2 ON (c.user_id IS NULL AND u2.login = c.user_login)
+    WHERE c.article_id = ?
+    ORDER BY c.created_at DESC, c.id DESC
+  `;
+
+  db.all(sql, [articleId], (err, rows) => {
+    if (err) {
+      console.error("DB error (get article comments):", err);
+      return res.status(500).json({ ok: false, message: "DB error" });
+    }
+
+    return res.json({
+      ok: true,
+      comments: (rows || []).map((r) => mapArticleCommentRow(r, req)),
+    });
+  });
+});
+
+app.post("/api/articles/:id/comments", (req, res) => {
+  const articleId = Number(req.params.id);
+  if (!Number.isInteger(articleId)) return res.status(400).json({ ok: false, message: "Invalid id" });
+
+  const text = String(req.body?.text || "").trim();
+  if (!text) return res.status(400).json({ ok: false, message: "Text is required" });
+
+  resolveRequestUser(req, (uErr, requester) => {
+    if (uErr) return res.status(500).json({ ok: false, message: "DB error" });
+    if (!requester.login || requester.login === "admin") {
+      return res.status(403).json({ ok: false, message: "Only authorized users can comment" });
+    }
+
+    const createdAt = Math.floor(Date.now() / 1000);
+
+    // подтянем имя пользователя как в reviews (упрощённо)
+    db.get("SELECT first_name, last_name, login FROM users WHERE id = ?", [requester.id], (e1, urow) => {
+      const displayName = [urow?.first_name, urow?.last_name].filter(Boolean).join(" ").trim();
+      const userName = displayName || requester.login;
+
+      db.run(
+        `INSERT INTO article_comments (article_id, user_id, user_login, user_name, text, created_at)
+         VALUES (?, ?, ?, ?, ?, ?)`,
+        [articleId, requester.id ?? null, requester.login, userName, text, createdAt],
+        function (e2) {
+          if (e2) return res.status(500).json({ ok: false, message: "DB error" });
+          return res.json({ ok: true, id: this.lastID });
+        }
+      );
+    });
+  });
+});
+
+// ===================== ARTICLE FAVORITES =====================
+// POST -> add, DELETE -> remove
+app.post("/api/articles/:id/favorite", (req, res) => {
+  const articleId = Number(req.params.id);
+  if (!Number.isInteger(articleId)) return res.status(400).json({ ok: false, message: "Invalid id" });
+
+  resolveRequestUser(req, (uErr, requester) => {
+    if (uErr) return res.status(500).json({ ok: false, message: "DB error" });
+    if (!requester.login || requester.login === "admin") {
+      return res.status(403).json({ ok: false, message: "Only authorized users can favorite" });
+    }
+
+    db.run(
+      "INSERT OR IGNORE INTO article_favorites (article_id, user_id, user_login) VALUES (?, ?, ?)",
+      [articleId, requester.id ?? null, requester.login],
+      function (err) {
+        if (err) return res.status(500).json({ ok: false, message: "DB error" });
+        return res.json({ ok: true });
+      }
+    );
+  });
+});
+
+// ✅ Удалить статью (админ или автор)
+app.delete("/api/articles/:id", async (req, res) => {
+  return withOrderLock(async () => {
+    const id = Number(req.params.id);
+    if (!Number.isInteger(id)) return res.status(400).json({ ok: false, message: "Invalid id" });
+
+    try {
+      const requester = await resolveRequestUserAsync(req);
+      await ensureSequentialDisplayOrders("articles");
+
+      const row = await dbGetAsync(
+        "SELECT id, status, author_id, author_login, display_order FROM articles WHERE id = ? LIMIT 1",
+        [id]
+      );
+      if (!row) return res.status(404).json({ ok: false, message: "Not found" });
+
+      const isAdmin = requester.login === "admin";
+      const isOwner =
+        (requester.id && row.author_id && requester.id === row.author_id) ||
+        (requester.login && row.author_login && requester.login === row.author_login);
+
+      if (!isAdmin && !(isOwner && (row.status === "draft" || row.status === "pending"))) {
+        return res.status(403).json({ ok: false, message: "Forbidden" });
+      }
+
+      await withTransaction(async () => {
+        await dbRunAsync("DELETE FROM article_favorites WHERE article_id = ?", [id]);
+        await dbRunAsync("DELETE FROM article_comments WHERE article_id = ?", [id]);
+        const result = await dbRunAsync("DELETE FROM articles WHERE id = ?", [id]);
+        if (!result.changes) {
+          throw new Error("ARTICLE_NOT_FOUND");
+        }
+        await closeDisplayOrderGap("articles", row.display_order);
+      });
+
+      return res.json({ ok: true });
+    } catch (err) {
+      if (err?.message === "ARTICLE_NOT_FOUND") {
+        return res.status(404).json({ ok: false, message: "Not found" });
+      }
+      return res.status(500).json({ ok: false, message: "DB error" });
+    }
+  });
+});
+
+app.delete("/api/articles/:id/favorite", (req, res) => {
+  const articleId = Number(req.params.id);
+  if (!Number.isInteger(articleId)) return res.status(400).json({ ok: false, message: "Invalid id" });
+
+  resolveRequestUser(req, (uErr, requester) => {
+    if (uErr) return res.status(500).json({ ok: false, message: "DB error" });
+    if (!requester.login || requester.login === "admin") {
+      return res.status(403).json({ ok: false, message: "Only authorized users can favorite" });
+    }
+
+    db.run(
+      "DELETE FROM article_favorites WHERE article_id = ? AND (user_id = ? OR user_login = ?)",
+      [articleId, requester.id ?? -1, requester.login],
+      function (err) {
+        if (err) return res.status(500).json({ ok: false, message: "DB error" });
+        return res.json({ ok: true });
+      }
+    );
+  });
+});
+
+// Сколько избранных у статьи
+app.get("/api/articles/:id/favorite-count", (req, res) => {
+  const articleId = Number(req.params.id);
+  if (!Number.isInteger(articleId)) return res.status(400).json({ ok: false, message: "Invalid id" });
+
+  db.get(
+    "SELECT COUNT(*) AS cnt FROM article_favorites WHERE article_id = ?",
+    [articleId],
+    (err, row) => {
+      if (err) return res.status(500).json({ ok: false, message: "DB error" });
+      return res.json({ ok: true, count: Number(row?.cnt ?? 0) });
+    }
+  );
+});
+
+// ===================== ANALYTICS API =====================
+
+app.post("/api/analytics/event", (req, res) => {
+  const {
+    event,
+    payload = {},
+    path: pagePath = "",
+    referrer = "",
+    userAgent = "",
+    ts,
+    visitorId = null,
+    sessionId = null,
+  } = req.body || {};
+
+  const eventName = String(event || "").trim();
+  if (!eventName) {
+    return res.status(400).json({ ok: false, message: "Event is required" });
+  }
+
+  const ip = getClientIp(req);
+  const ua = normalizeUa(userAgent || req.headers["user-agent"] || "");
+  const deviceType = detectDeviceType(ua);
+  const source = detectSource(referrer);
+
+  const safeVisitorId = visitorId ? String(visitorId).trim() : null;
+  const safeSessionId = sessionId ? String(sessionId).trim() : null;
+
+  // fallback ключи, если фронт их не прислал
+  const visitorKey = safeVisitorId || `${ip}__${ua}`;
+  const sessionKey =
+    safeSessionId || `${visitorKey}__${new Date().toDateString()}`;
+
+  let entityType = null;
+  let entityId = null;
+  let entityTitle = null;
+  let durationSec = null;
+
+  if (eventName === "place_card_click") {
+    entityType = "place";
+    entityId = payload?.placeId != null ? String(payload.placeId) : null;
+    entityTitle = payload?.placeName ? String(payload.placeName) : null;
+  } else if (eventName === "article_card_click") {
+    entityType = "article";
+    entityId = payload?.articleId != null ? String(payload.articleId) : null;
+    entityTitle = payload?.articleTitle ? String(payload.articleTitle) : null;
+  } else if (
+    eventName === "tg_popup_shown" ||
+    eventName === "tg_popup_closed" ||
+    eventName === "tg_popup_subscribe_click"
+  ) {
+    entityType = "popup";
+    entityId = "telegram_popup";
+    entityTitle = "Telegram popup";
+  } else if (eventName === "session_start" || eventName === "session_end") {
+    entityType = "session";
+    entityId = sessionKey;
+    entityTitle = "Website session";
+  }
+
+  if (eventName === "session_end") {
+    const rawDuration = Number(payload?.durationSec);
+    if (Number.isFinite(rawDuration) && rawDuration >= 0) {
+      durationSec = Math.round(rawDuration);
+    }
+  }
+
+  const createdAt =
+    Number.isFinite(Number(ts)) && Number(ts) > 0
+      ? Math.floor(Number(ts) / 1000)
+      : Math.floor(Date.now() / 1000);
+
+  const sql = `
+    INSERT INTO analytics_events (
+      event_name,
+      path,
+      referrer,
+      source,
+      ip,
+      user_agent,
+      device_type,
+      visitor_id,
+      session_id,
+      visitor_key,
+      session_key,
+      entity_type,
+      entity_id,
+      entity_title,
+      payload_json,
+      duration_sec,
+      created_at
+    )
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `;
+
+  db.run(
+    sql,
+    [
+      eventName,
+      String(pagePath || "").slice(0, 300),
+      String(referrer || "").slice(0, 500),
+      source,
+      String(ip || "").slice(0, 100),
+      ua,
+      deviceType,
+      safeVisitorId,
+      safeSessionId,
+      String(visitorKey).slice(0, 700),
+      String(sessionKey).slice(0, 700),
+      entityType,
+      entityId,
+      entityTitle,
+      safeJsonStringify(payload),
+      durationSec,
+      createdAt,
+    ],
+    function (err) {
+      if (err) {
+        console.error("DB error (insert analytics event):", err);
+        return res.status(500).json({ ok: false, message: "DB error" });
+      }
+      return res.json({ ok: true, id: this.lastID });
+    }
+  );
+});
+
+app.get("/api/admin/stats/overview", (req, res) => {
+  const sqlTodayVisitors = `
+    SELECT COUNT(*) AS cnt
+    FROM analytics_events
+    WHERE event_name = 'session_start'
+      AND date(created_at, 'unixepoch', 'localtime') = date('now', 'localtime')
+  `;
+
+  const sqlYesterdayVisitors = `
+    SELECT COUNT(*) AS cnt
+    FROM analytics_events
+    WHERE event_name = 'session_start'
+      AND date(created_at, 'unixepoch', 'localtime') = date('now', '-1 day', 'localtime')
+  `;
+
+  const sqlTodayUniqueVisitors = `
+    SELECT COUNT(DISTINCT visitor_key) AS cnt
+    FROM analytics_events
+    WHERE event_name = 'session_start'
+      AND date(created_at, 'unixepoch', 'localtime') = date('now', 'localtime')
+  `;
+
+  const sqlYesterdayUniqueVisitors = `
+    SELECT COUNT(DISTINCT visitor_key) AS cnt
+    FROM analytics_events
+    WHERE event_name = 'session_start'
+      AND date(created_at, 'unixepoch', 'localtime') = date('now', '-1 day', 'localtime')
+  `;
+
+  const sqlAvgSessionDuration = `
+    SELECT AVG(duration_sec) AS avg_duration
+    FROM analytics_events
+    WHERE event_name = 'session_end'
+      AND duration_sec IS NOT NULL
+      AND duration_sec > 0
+  `;
+
+  const sqlAvgPagesPerSession = `
+    SELECT AVG(page_count) AS avg_pages
+    FROM (
+      SELECT session_key, COUNT(DISTINCT path) AS page_count
+      FROM analytics_events
+      WHERE path IS NOT NULL AND TRIM(path) <> ''
+      GROUP BY session_key
+    ) t
+  `;
+
+  const sqlPopupShown = `
+    SELECT COUNT(*) AS cnt
+    FROM analytics_events
+    WHERE event_name = 'tg_popup_shown'
+  `;
+
+  const sqlPopupSubscribe = `
+    SELECT COUNT(*) AS cnt
+    FROM analytics_events
+    WHERE event_name = 'tg_popup_subscribe_click'
+  `;
+
+  const sqlTopPlaces = `
+    SELECT
+      COALESCE(entity_title, 'Без названия') AS name,
+      entity_id AS id,
+      COUNT(*) AS clicks
+    FROM analytics_events
+    WHERE event_name = 'place_card_click'
+      AND entity_type = 'place'
+    GROUP BY entity_id, entity_title
+    ORDER BY clicks DESC, name ASC
+    LIMIT 10
+  `;
+
+  const sqlTopArticles = `
+    SELECT
+      COALESCE(entity_title, 'Без названия') AS title,
+      entity_id AS id,
+      COUNT(*) AS clicks
+    FROM analytics_events
+    WHERE event_name = 'article_card_click'
+      AND entity_type = 'article'
+    GROUP BY entity_id, entity_title
+    ORDER BY clicks DESC, title ASC
+    LIMIT 10
+  `;
+
+  const sqlTopSources = `
+    SELECT
+      COALESCE(source, 'unknown') AS source,
+      COUNT(*) AS visits
+    FROM analytics_events
+    WHERE event_name = 'session_start'
+    GROUP BY source
+    ORDER BY visits DESC, source ASC
+    LIMIT 10
+  `;
+
+  const sqlDevices = `
+    SELECT
+      COALESCE(device_type, 'unknown') AS device,
+      COUNT(*) AS count
+    FROM analytics_events
+    WHERE event_name = 'session_start'
+    GROUP BY device_type
+    ORDER BY count DESC, device ASC
+  `;
+
+  db.get(sqlTodayVisitors, (e1, todayVisitorsRow) => {
+    if (e1) {
+      console.error("Stats error (today visitors):", e1);
+      return res.status(500).json({ ok: false, message: "DB error" });
+    }
+
+    db.get(sqlYesterdayVisitors, (e2, yesterdayVisitorsRow) => {
+      if (e2) {
+        console.error("Stats error (yesterday visitors):", e2);
+        return res.status(500).json({ ok: false, message: "DB error" });
+      }
+
+      db.get(sqlTodayUniqueVisitors, (e3, todayUniqueVisitorsRow) => {
+        if (e3) {
+          console.error("Stats error (today unique visitors):", e3);
+          return res.status(500).json({ ok: false, message: "DB error" });
+        }
+
+        db.get(sqlYesterdayUniqueVisitors, (e4, yesterdayUniqueVisitorsRow) => {
+          if (e4) {
+            console.error("Stats error (yesterday unique visitors):", e4);
+            return res.status(500).json({ ok: false, message: "DB error" });
+          }
+
+          db.get(sqlAvgSessionDuration, (e5, avgDurationRow) => {
+            if (e5) {
+              console.error("Stats error (avg session duration):", e5);
+              return res.status(500).json({ ok: false, message: "DB error" });
+            }
+
+            db.get(sqlAvgPagesPerSession, (e6, avgPagesRow) => {
+              if (e6) {
+                console.error("Stats error (avg pages per session):", e6);
+                return res.status(500).json({ ok: false, message: "DB error" });
+              }
+
+              db.get(sqlPopupShown, (e7, popupShownRow) => {
+                if (e7) {
+                  console.error("Stats error (popup shown):", e7);
+                  return res.status(500).json({ ok: false, message: "DB error" });
+                }
+
+                db.get(sqlPopupSubscribe, (e8, popupSubscribeRow) => {
+                  if (e8) {
+                    console.error("Stats error (popup subscribe):", e8);
+                    return res.status(500).json({ ok: false, message: "DB error" });
+                  }
+
+                  db.all(sqlTopPlaces, (e9, topPlacesRows) => {
+                    if (e9) {
+                      console.error("Stats error (top places):", e9);
+                      return res.status(500).json({ ok: false, message: "DB error" });
+                    }
+
+                    db.all(sqlTopArticles, (e10, topArticlesRows) => {
+                      if (e10) {
+                        console.error("Stats error (top articles):", e10);
+                        return res.status(500).json({ ok: false, message: "DB error" });
+                      }
+
+                      db.all(sqlTopSources, (e11, topSourcesRows) => {
+                        if (e11) {
+                          console.error("Stats error (top sources):", e11);
+                          return res.status(500).json({ ok: false, message: "DB error" });
+                        }
+
+                        db.all(sqlDevices, (e12, devicesRows) => {
+                          if (e12) {
+                            console.error("Stats error (devices):", e12);
+                            return res.status(500).json({ ok: false, message: "DB error" });
+                          }
+
+                          const todayVisitors = Number(todayVisitorsRow?.cnt ?? 0);
+                          const yesterdayVisitors = Number(yesterdayVisitorsRow?.cnt ?? 0);
+                          const todayUniqueVisitors = Number(todayUniqueVisitorsRow?.cnt ?? 0);
+                          const yesterdayUniqueVisitors = Number(yesterdayUniqueVisitorsRow?.cnt ?? 0);
+                          const avgSessionDurationSec = Math.round(
+                            Number(avgDurationRow?.avg_duration ?? 0)
+                          );
+                          const avgPagesPerSession = Number(
+                            Number(avgPagesRow?.avg_pages ?? 0).toFixed(1)
+                          );
+
+                          const tgPopupShown = Number(popupShownRow?.cnt ?? 0);
+                          const tgPopupSubscribeClicks = Number(popupSubscribeRow?.cnt ?? 0);
+
+                          const conversion =
+                            tgPopupShown > 0
+                              ? ((tgPopupSubscribeClicks / tgPopupShown) * 100).toFixed(1) + "%"
+                              : "0%";
+
+                          return res.json({
+                            ok: true,
+                            stats: {
+                              todayVisitors,
+                              yesterdayVisitors,
+                              todayUniqueVisitors,
+                              yesterdayUniqueVisitors,
+                              avgSessionDurationSec,
+                              avgSessionDurationHuman: formatDurationHuman(avgSessionDurationSec),
+                              avgPagesPerSession,
+                              tgPopupShown,
+                              tgPopupSubscribeClicks,
+                              tgPopupConversion: conversion,
+                              topPlaces: (topPlacesRows || []).map((row) => ({
+                                id: row.id,
+                                name: row.name,
+                                clicks: Number(row.clicks || 0),
+                              })),
+                              topArticles: (topArticlesRows || []).map((row) => ({
+                                id: row.id,
+                                title: row.title,
+                                clicks: Number(row.clicks || 0),
+                              })),
+                              topSources: (topSourcesRows || []).map((row) => ({
+                                source: row.source,
+                                visits: Number(row.visits || 0),
+                              })),
+                              devices: (devicesRows || []).map((row) => ({
+                                device: row.device,
+                                count: Number(row.count || 0),
+                              })),
+                            },
+                          });
+                        });
+                      });
+                    });
+                  });
+                });
+              });
+            });
+          });
+        });
+      });
+    });
+  });
+});
+
+// ===================== SERVER START =====================
+
+app.use("/api", (req, res) => {
+  return res.status(404).json({
+    ok: false,
+    message: `API route not found: ${req.method} ${req.originalUrl}`,
+  });
+});
+
+app.use((err, req, res, next) => {
+  if (!req.originalUrl.startsWith("/api/")) {
+    return next(err);
+  }
+
+  if (err instanceof multer.MulterError) {
+    const message =
+      err.code === "LIMIT_FILE_SIZE"
+        ? "Файл слишком большой. Максимальный размер: 10 МБ."
+        : err.code === "LIMIT_FILE_COUNT"
+        ? "Слишком много файлов. Максимум: 20."
+        : "Ошибка загрузки файлов.";
+
+    return res.status(400).json({
+      ok: false,
+      message,
+    });
+  }
+
+  console.error("API error:", err);
+
+  return res.status(err?.status || 500).json({
+    ok: false,
+    message: err?.message || "Ошибка сервера",
+  });
+});
 
 app.listen(PORT, HOST, () => {
   console.log(`Server is running on http://${HOST}:${PORT}`);

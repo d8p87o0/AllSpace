@@ -1,4 +1,5 @@
 // server/db.js
+import fs from "fs";
 import sqlite3pkg from "sqlite3";
 import path from "path";
 import { fileURLToPath } from "url";
@@ -9,7 +10,16 @@ const sqlite3 = sqlite3pkg.verbose();
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-const dbPath = path.resolve(__dirname, "users.db");
+const envDbPath = process.env.DB_PATH;
+const dbPath = envDbPath
+  ? path.resolve(process.cwd(), envDbPath)
+  : path.resolve(__dirname, "users.db");
+const dbDir = path.dirname(dbPath);
+
+if (!fs.existsSync(dbDir)) {
+  fs.mkdirSync(dbDir, { recursive: true });
+}
+
 const db = new sqlite3.Database(dbPath);
 
 db.serialize(() => {

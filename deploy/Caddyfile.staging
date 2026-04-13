@@ -1,0 +1,7 @@
+www.allspace.com.ru {
+  redir https://allspace.com.ru{uri} permanent
+}
+
+allspace.com.ru {
+  reverse_proxy frontend:80
+}

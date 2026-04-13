@@ -1,0 +1,12 @@
+User-agent: *
+Allow: /
+
+Disallow: /admin
+Disallow: /login
+Disallow: /register
+Disallow: /verify-email
+Disallow: /profile
+Disallow: /submit-place
+Disallow: /submit-article
+
+Sitemap: https://allspace.com.ru/sitemap.xml

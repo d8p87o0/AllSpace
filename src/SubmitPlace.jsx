@@ -1,8 +1,15 @@
 ﻿import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import "./App.css";
+import SEO, { SEO_SITE_URL } from "./SEO.jsx";
+import { API_BASE, readJsonResponse } from "./api.js";
 
-const API_BASE = import.meta.env.VITE_API_BASE || (import.meta.env.PROD ? "/api" : "http://localhost:3001");
+<SEO
+  title="Добавить место — ALLSPACE"
+  description="Добавление нового места."
+  url={`${SEO_SITE_URL}/submit-place`}
+  noindex={true}
+/>
 
 const emptyForm = {
   name: "",
@@ -134,14 +141,7 @@ export default function SubmitPlacePage() {
       body: formData,
     });
 
-    let data = null;
-    const ct = res.headers.get("content-type") || "";
-    if (ct.includes("application/json")) {
-      data = await res.json();
-    } else {
-      const text = await res.text();
-      throw new Error(`Ошибка загрузки (${res.status}). Сервер вернул не JSON: ${text.slice(0, 120)}`);
-    }
+    const data = await readJsonResponse(res, "Загрузка изображений");
 
     if (!res.ok || !data?.ok) {
       throw new Error(data?.message || `Не удалось загрузить изображения (${res.status})`);
@@ -213,7 +213,7 @@ export default function SubmitPlacePage() {
         body: JSON.stringify(body),
       });
 
-      const data = await res.json();
+      const data = await readJsonResponse(res, "Добавление места");
       if (!data.ok) {
         setError(data.message || "Не удалось отправить место");
         return;
@@ -444,4 +444,3 @@ export default function SubmitPlacePage() {
     </section>
   );
 }
-

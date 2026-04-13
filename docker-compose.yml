@@ -1,0 +1,42 @@
+services:
+  backend:
+    build:
+      context: .
+      dockerfile: docker/backend.Dockerfile
+    env_file:
+      - .env
+    environment:
+      HOST: 0.0.0.0
+      PORT: 3001
+      DB_PATH: /app/server/users.db
+      DISABLE_EMAIL_VERIFICATION: "true"
+      CLIENT_ORIGIN: https://allspace.com.ru
+      CLIENT_ORIGINS: https://allspace.com.ru,https://www.allspace.com.ru,http://localhost:8080,http://127.0.0.1:8080,http://localhost:5173,http://127.0.0.1:5173
+    ports:
+      - "3001:3001"
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3001/healthz').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 5s
+    volumes:
+      - ./server/users.db:/app/server/users.db
+      - ./server/photos:/app/server/photos
+      - ./server/avatars:/app/server/avatars
+      - ./server/parsed:/app/server/parsed
+    restart: unless-stopped
+
+  frontend:
+    build:
+      context: .
+      dockerfile: docker/frontend.Dockerfile
+      args:
+        VITE_API_BASE: /api
+        SITEMAP_API_BASE: http://backend:3001
+    depends_on:
+      backend:
+        condition: service_healthy
+    ports:
+      - "8080:80"
+    restart: unless-stopped

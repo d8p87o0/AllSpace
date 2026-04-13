@@ -1,4 +1,4 @@
-﻿import { useEffect, useState, useRef } from "react";
+﻿import { useEffect, useState, useRef, useMemo } from "react";
 import { Routes, Route, useNavigate } from "react-router-dom";
 // import placesData from "./places.json"; // больше не нужно
 import PlacePage from "./PlacePage.jsx";
@@ -9,9 +9,11 @@ import VerifyEmailPage from "./VerifyEmailPage.jsx";
 import { ProfilePage } from "./ProfilePage.jsx";
 import AdminPage from "./Admin.jsx";
 import SubmitPlacePage from "./SubmitPlace.jsx";
-
-
-const API_BASE = import.meta.env.VITE_API_BASE || (import.meta.env.PROD ? "/api" : "http://localhost:3001");
+import SubmitArticlePage from "./SubmitArticle.jsx";
+import ArticlePage from "./ArticlePage.jsx";
+import { useLocation } from "react-router-dom";
+import SEO, { SEO_SITE_URL } from "./SEO.jsx";
+import { API_BASE } from "./api.js";
 
 function resolveMediaUrl(url) {
   if (!url) return url;
@@ -26,6 +28,72 @@ function resolveMediaUrl(url) {
   return url;
 }
 
+function formatArticleDate(value) {
+  if (!value) return "";
+  const num = Number(value);
+
+  // unix seconds
+  if (Number.isFinite(num) && String(value).length <= 10) {
+    const d = new Date(num * 1000);
+    if (!Number.isNaN(d.getTime())) {
+      return d.toLocaleDateString("ru-RU", {
+        day: "numeric",
+        month: "short",
+        year: "numeric",
+      });
+    }
+  }
+
+  const d = new Date(value);
+  if (!Number.isNaN(d.getTime())) {
+    return d.toLocaleDateString("ru-RU", {
+      day: "numeric",
+      month: "short",
+      year: "numeric",
+    });
+  }
+
+  return "";
+}
+
+async function trackEvent(event, payload = {}) {
+  try {
+    const VISITOR_KEY = "analytics_visitor_id";
+    const SESSION_KEY = "analytics_session_id";
+
+    let visitorId = localStorage.getItem(VISITOR_KEY);
+    if (!visitorId) {
+      visitorId =
+        "v_" + Date.now().toString(36) + "_" + Math.random().toString(36).slice(2, 10);
+      localStorage.setItem(VISITOR_KEY, visitorId);
+    }
+
+    let sessionId = sessionStorage.getItem(SESSION_KEY);
+    if (!sessionId) {
+      sessionId =
+        "s_" + Date.now().toString(36) + "_" + Math.random().toString(36).slice(2, 10);
+      sessionStorage.setItem(SESSION_KEY, sessionId);
+    }
+
+    await fetch(`${API_BASE}/api/analytics/event`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        event,
+        payload,
+        path: window.location.pathname,
+        referrer: document.referrer || "",
+        userAgent: navigator.userAgent,
+        visitorId,
+        sessionId,
+        ts: Date.now(),
+      }),
+    });
+  } catch (e) {
+    console.error("Analytics track error:", e);
+  }
+}
+
 function getCover(place) {
   const fromImage = place?.image;
   const fromGallery = Array.isArray(place?.images) && place.images.length ? place.images[0] : null;
@@ -33,25 +101,110 @@ function getCover(place) {
 }
 
 const CITIES = [
-  { id: "moscow", name: "Москва", top: "47%", left: "14%" },
-  { id: "spb", name: "Санкт-Петербург", top: "33%", left: "15%" },
-  { id: "rostov", name: "Ростов-на-Дону", top: "65%", left: "8%" },
-  { id: "omsk", name: "Омск", top: "74%", left: "36%" },
-  { id: "nn", name: "Нижний Новгород", top: "53%", left: "18%" },
-  { id: "kazan", name: "Казань", top: "61%", left: "20%" },
-  { id: "samara", name: "Самара", top: "67%", left: "18%" },
-  { id: "volgograd", name: "Волгоград", top: "67%", left: "13%" },
-  { id: "voronezh", name: "Воронеж", top: "58%", left: "10%" },
-  { id: "ufa", name: "Уфа", top: "73%", left: "32%" },
-  { id: "perm", name: "Пермь", top: "60%", left: "27%" },
-  { id: "ekb", name: "Екатеринбург", top: "65%", left: "30%" },
-  { id: "chelyabinsk", name: "Челябинск", top: "71%", left: "29%" },
-  { id: "novosibirsk", name: "Новосибирск", top: "82%", left: "42%" },
-  { id: "krasnoyarsk", name: "Красноярск", top: "80%", left: "50%" },
-  { id: "vladivostok", name: "Владивосток", top: "85%", left: "88%" },
+  { id: "spb", name: "Санкт-Петербург", top: "38%", left: "15.0%" },
+  { id: "moscow", name: "Москва", top: "48.0%", left: "14.2%" },
+  { id: "nn", name: "Нижний Новгород", top: "53.5%", left: "18.7%" },
+  { id: "voronezh", name: "Воронеж", top: "58.7%", left: "10.3%" },
+  { id: "rostov", name: "Ростов-на-Дону", top: "66.3%", left: "8.3%" },
+  { id: "volgograd", name: "Волгоград", top: "63.2%", left: "12.0%" },
+  { id: "kazan", name: "Казань", top: "60.2%", left: "21.0%" },
+  { id: "samara", name: "Самара", top: "64.0%", left: "18.8%" },
+  { id: "perm", name: "Пермь", top: "58.8%", left: "26.0%" },
+  { id: "ufa", name: "Уфа", top: "66.4%", left: "23.2%" },
+  { id: "ekb", name: "Екатеринбург", top: "63.2%", left: "28.4%" },
+  { id: "chelyabinsk", name: "Челябинск", top: "68.3%", left: "29.0%" },
+  { id: "omsk", name: "Омск", top: "71.0%", left: "36.0%" },
+  { id: "novosibirsk", name: "Новосибирск", top: "75.2%", left: "40.2%" },
+  { id: "krasnoyarsk", name: "Красноярск", top: "83.8%", left: "50.2%" },
+  { id: "vladivostok", name: "Владивосток", top: "86.8%", left: "86.8%" },
 ];
 
+const CITY_MAP_CENTERS = {
+  "Москва": [55.755864, 37.617698],
+  "Санкт-Петербург": [59.938955, 30.315644],
+  "Иваново": [57.000348, 40.973921],
+};
+
+const GOLDEN_ANGLE = Math.PI * (3 - Math.sqrt(5));
+const ROUTE_MAP_ZOOM_MARGIN = [56, 56, 56, 56];
+
+function parseCoordinate(value) {
+  const numeric = Number(value);
+  return Number.isFinite(numeric) ? numeric : null;
+}
+
+function escapeHtml(value) {
+  return String(value ?? "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
+function buildFallbackCoordinates(center, index) {
+  if (!Array.isArray(center) || center.length !== 2) return null;
+
+  const [baseLat, baseLon] = center;
+  if (index <= 0) return center;
+
+  const radius = 0.01 + Math.sqrt(index) * 0.0085;
+  const angle = index * GOLDEN_ANGLE;
+  const latOffset = Math.sin(angle) * radius;
+  const lonOffset =
+    (Math.cos(angle) * radius) / Math.max(Math.cos((baseLat * Math.PI) / 180), 0.35);
+
+  return [baseLat + latOffset, baseLon + lonOffset];
+}
+
+function buildRouteMapBalloon(place) {
+  const title = escapeHtml(place.name || "Место");
+  const type = escapeHtml(place.type || "Место");
+  const city = escapeHtml(place.city || "");
+  const address = escapeHtml(place.address || "");
+  const href = `/place/${place.id}`;
+
+  return `
+    <div class="route-map-balloon">
+      <div class="route-map-balloon__title">${title}</div>
+      <div class="route-map-balloon__meta">${type}${city ? `, ${city}` : ""}</div>
+      ${address ? `<div class="route-map-balloon__address">${address}</div>` : ""}
+      <a class="route-map-balloon__link" href="${href}">Открыть карточку</a>
+    </div>
+  `;
+}
+
+function getPlaceMarkerClass(type, isFallback = false) {
+  const normalizedType = String(type || "").toLowerCase();
+  let markerClass = "route-map-marker--default";
+
+  if (normalizedType.includes("коф")) markerClass = "route-map-marker--coffee";
+  else if (normalizedType.includes("библи")) markerClass = "route-map-marker--library";
+  else if (normalizedType.includes("бар")) markerClass = "route-map-marker--bar";
+  else if (normalizedType.includes("антикаф")) markerClass = "route-map-marker--anticafe";
+  else if (normalizedType.includes("коворк")) markerClass = "route-map-marker--coworking";
+
+  if (isFallback) {
+    markerClass += " route-map-marker--fallback";
+  }
+
+  return markerClass;
+}
+
+function getRouteMapMarkerScale(zoom) {
+  if (zoom <= 4) return 0.58;
+  if (zoom <= 5) return 0.66;
+  if (zoom <= 6) return 0.76;
+  if (zoom <= 7) return 0.88;
+  if (zoom <= 8) return 0.98;
+  if (zoom <= 9) return 1.08;
+  if (zoom <= 10) return 1.16;
+  return 1.24;
+}
+
 const PAGE_SIZE = 9;
+const HOME_ARTICLES_LIMIT = 6;
+const SHOW_MORE_ARTICLES_THRESHOLD = 9;
 
 function shuffle(array) {
   const arr = [...array];
@@ -62,19 +215,223 @@ function shuffle(array) {
   return arr;
 }
 
+function wait(ms) {
+  return new Promise((resolve) => {
+    setTimeout(resolve, ms);
+  });
+}
+
+function ArticlesListPage({ articles, articlesLoading, articlesError, navigate }) {
+  return (
+    <>
+      <SEO
+        title="Все статьи — ALLSPACE"
+        description="Подборка статей ALLSPACE о фрилансе, удалённой работе, продуктивности и поиске комфортных мест для работы."
+        url={`${SEO_SITE_URL}/articles`}
+        image={`${SEO_SITE_URL}/og-default.jpg`}
+        type="website"
+        jsonLd={{
+          "@context": "https://schema.org",
+          "@type": "CollectionPage",
+          name: "Все статьи — ALLSPACE",
+          url: `${SEO_SITE_URL}/articles`,
+          description:
+            "Подборка статей ALLSPACE о фрилансе, удалённой работе, продуктивности и поиске комфортных мест для работы.",
+        }}
+      />
+
+      <section className="articles articles-page">
+        <div className="container">
+          <h2 className="articles__title bicubik-title">Все статьи</h2>
+
+          {articlesLoading && (
+            <p className="articles__hint">Загружаем статьи...</p>
+          )}
+
+          {articlesError && (
+            <p className="articles__hint articles__hint--error">{articlesError}</p>
+          )}
+
+          {!articlesLoading &&
+            !articlesError &&
+            Array.isArray(articles) &&
+            articles.length === 0 && <p className="articles__hint">Статей пока нет</p>}
+
+          {!articlesLoading &&
+            !articlesError &&
+            Array.isArray(articles) &&
+            articles.length > 0 && (
+              <div className="articles-grid">
+                {articles.map((a) => (
+                  <article
+                    key={a.id}
+                    className="article-card"
+                    onClick={() => navigate(`/article/${a.id}`)}
+                  >
+                    <div className="article-card__img-wrap">
+                      <img
+                        src={resolveMediaUrl(a.coverImage || "/no-photo.png")}
+                        alt={a.title || "Статья"}
+                        className="article-card__img"
+                        onError={(e) => (e.currentTarget.src = "/no-photo.png")}
+                      />
+                    </div>
+
+                    <div className="article-card__body">
+                      <div className="article-card__author-row">
+                        <div className="article-card__avatar">
+                          <img
+                            src={resolveMediaUrl(a.authorAvatar || "/account.svg")}
+                            alt={a.authorName || a.authorLogin || "Автор"}
+                            className="article-card__avatar-img"
+                            onError={(e) => {
+                              e.currentTarget.src = "/account.svg";
+                            }}
+                          />
+                        </div>
+                        <div className="article-card__author-meta">
+                          <div className="article-card__author">
+                            {a.authorName || a.authorLogin || "Автор"}
+                          </div>
+                          <div className="article-card__time">
+                            {a.publishedAtHuman ||
+                              formatArticleDate(a.publishedAt || a.createdAt)}
+                          </div>
+                        </div>
+                      </div>
+
+                      <h3 className="article-card__title">
+                        {a.title || "Без названия"}
+                      </h3>
+
+                      <p className="article-card__excerpt">
+                        {a.excerpt || a.description || "…"}
+                      </p>
+                    </div>
+                  </article>
+                ))}
+              </div>
+            )}
+        </div>
+      </section>
+    </>
+  );
+}
+
 function App() {
   const navigate = useNavigate();
+  const location = useLocation();
+  const routeMapInstanceRef = useRef(null);
+
+  const sendSessionEnd = () => {
+    try {
+      const startedAt = Number(sessionStorage.getItem("analytics_session_started_at") || Date.now());
+      const durationSec = Math.max(0, Math.round((Date.now() - startedAt) / 1000));
+  
+      const VISITOR_KEY = "analytics_visitor_id";
+      const SESSION_KEY = "analytics_session_id";
+  
+      let visitorId = localStorage.getItem(VISITOR_KEY);
+      if (!visitorId) {
+        visitorId =
+          "v_" + Date.now().toString(36) + "_" + Math.random().toString(36).slice(2, 10);
+        localStorage.setItem(VISITOR_KEY, visitorId);
+      }
+  
+      let sessionId = sessionStorage.getItem(SESSION_KEY);
+      if (!sessionId) {
+        sessionId =
+          "s_" + Date.now().toString(36) + "_" + Math.random().toString(36).slice(2, 10);
+        sessionStorage.setItem(SESSION_KEY, sessionId);
+      }
+  
+      const body = JSON.stringify({
+        event: "session_end",
+        payload: {
+          durationSec,
+        },
+        path: window.location.pathname,
+        referrer: document.referrer || "",
+        userAgent: navigator.userAgent,
+        visitorId,
+        sessionId,
+        ts: Date.now(),
+      });
+  
+      if (navigator.sendBeacon) {
+        const blob = new Blob([body], { type: "application/json" });
+        navigator.sendBeacon(`${API_BASE}/api/analytics/event`, blob);
+      } else {
+        fetch(`${API_BASE}/api/analytics/event`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body,
+          keepalive: true,
+        }).catch(() => {});
+      }
+    } catch (e) {
+      console.error("sendSessionEnd error:", e);
+    }
+  };
+
+  const hideMainHeader = useMemo(() => {
+    const p = location.pathname;
+    return p.startsWith("/submit-article") || p.startsWith("/article/");
+  }, [location.pathname]);
 
   const [orderedCities, setOrderedCities] = useState([]);
   const [visibleCount, setVisibleCount] = useState(0);
 
   const [isLoggedIn, setIsLoggedIn] = useState(false);
 
+  const [showTelegramPopup, setShowTelegramPopup] = useState(false);
+  const popupShownRef = useRef(false);
+  const sessionStartedAtRef = useRef(Date.now());
+
   
   // ======= МЕСТА ИЗ API =======
   const [places, setPlaces] = useState([]);
   const [placesLoading, setPlacesLoading] = useState(true);
   const [placesError, setPlacesError] = useState("");
+
+  const routeMapPlaces = useMemo(() => {
+    if (!Array.isArray(places) || !places.length) return [];
+
+    const fallbackIndexes = new Map();
+
+    return [...places]
+      .sort((a, b) => Number(a.id || 0) - Number(b.id || 0))
+      .map((place) => {
+        const latitude = parseCoordinate(place.latitude);
+        const longitude = parseCoordinate(place.longitude);
+
+        if (latitude !== null && longitude !== null) {
+          return {
+            ...place,
+            mapLatitude: latitude,
+            mapLongitude: longitude,
+            isFallbackCoordinate: false,
+          };
+        }
+
+        const cityCenter = CITY_MAP_CENTERS[place.city];
+        if (!cityCenter) return null;
+
+        const index = fallbackIndexes.get(place.city) || 0;
+        fallbackIndexes.set(place.city, index + 1);
+
+        const fallbackCoordinates = buildFallbackCoordinates(cityCenter, index);
+        if (!fallbackCoordinates) return null;
+
+        return {
+          ...place,
+          mapLatitude: fallbackCoordinates[0],
+          mapLongitude: fallbackCoordinates[1],
+          isFallbackCoordinate: true,
+        };
+      })
+      .filter(Boolean);
+  }, [places]);
   
   useEffect(() => {
     try {
@@ -91,12 +448,29 @@ function App() {
       setPlacesLoading(true);
       setPlacesError("");
       try {
-        const res = await fetch(`${API_BASE}/api/places`);
-        const data = await res.json();
-        if (!data.ok) {
-          throw new Error(data.message || "Не удалось загрузить места");
+        let lastError = null;
+
+        for (let attempt = 0; attempt < 5; attempt += 1) {
+          try {
+            const res = await fetch(`${API_BASE}/api/places`);
+            const data = await res.json();
+            if (!data.ok) {
+              throw new Error(data.message || "Не удалось загрузить места");
+            }
+            setPlaces(data.places || []);
+            lastError = null;
+            break;
+          } catch (error) {
+            lastError = error;
+            if (attempt < 4) {
+              await wait(1200);
+            }
+          }
         }
-        setPlaces(data.places || []);
+
+        if (lastError) {
+          throw lastError;
+        }
       } catch (e) {
         console.error("Ошибка загрузки мест:", e);
         setPlacesError("Не удалось загрузить места");
@@ -107,6 +481,148 @@ function App() {
     
     fetchPlaces();
   }, []);
+
+  useEffect(() => {
+    trackEvent("session_start", {
+      pathname: location.pathname,
+    });
+  
+    const startedAt = sessionStartedAtRef.current;
+  
+    window.addEventListener("beforeunload", sendSessionEnd);
+    return () => {
+      sendSessionEnd();
+      window.removeEventListener("beforeunload", sendSessionEnd);
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!sessionStorage.getItem("analytics_session_started_at")) {
+      sessionStorage.setItem("analytics_session_started_at", String(Date.now()));
+    }
+  
+    const handleBeforeUnload = () => {
+      sendSessionEnd();
+    };
+  
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === "hidden") {
+        sendSessionEnd();
+      }
+    };
+  
+    window.addEventListener("beforeunload", handleBeforeUnload);
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+  
+    return () => {
+      window.removeEventListener("beforeunload", handleBeforeUnload);
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
+    };
+  }, []);
+
+  useEffect(() => {
+    const VISITOR_KEY = "analytics_visitor_id";
+    const SESSION_KEY = "analytics_session_id";
+  
+    let visitorId = localStorage.getItem(VISITOR_KEY);
+    if (!visitorId) {
+      visitorId =
+        "v_" + Date.now().toString(36) + "_" + Math.random().toString(36).slice(2, 10);
+      localStorage.setItem(VISITOR_KEY, visitorId);
+    }
+  
+    let sessionId = sessionStorage.getItem(SESSION_KEY);
+    if (!sessionId) {
+      sessionId =
+        "s_" + Date.now().toString(36) + "_" + Math.random().toString(36).slice(2, 10);
+      sessionStorage.setItem(SESSION_KEY, sessionId);
+    }
+  
+    if (!sessionStorage.getItem("analytics_session_started_at")) {
+      sessionStorage.setItem("analytics_session_started_at", String(Date.now()));
+    }
+  
+    fetch(`${API_BASE}/api/analytics/event`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        event: "session_start",
+        payload: {},
+        path: window.location.pathname,
+        referrer: document.referrer || "",
+        userAgent: navigator.userAgent,
+        visitorId,
+        sessionId,
+        ts: Date.now(),
+      }),
+    }).catch((e) => {
+      console.error("session_start error:", e);
+    });
+  }, []);
+
+  useEffect(() => {
+    const blockedPaths = ["/admin", "/login", "/register", "/submit-place", "/submit-article"];
+    if (blockedPaths.some((p) => location.pathname.startsWith(p))) return;
+    if (location.pathname.startsWith("/article/")) return;
+  
+    const storageKey = "tg_popup_last_shown_at";
+  
+    try {
+      const raw = localStorage.getItem(storageKey);
+      if (raw) {
+        const lastShownAt = Number(raw);
+        const threeDays = 3 * 24 * 60 * 60 * 1000;
+        if (Date.now() - lastShownAt < threeDays) return;
+      }
+    } catch {}
+  
+    let timer = setTimeout(() => {
+      if (!popupShownRef.current) {
+        popupShownRef.current = true;
+        setShowTelegramPopup(true);
+        try {
+          localStorage.setItem(storageKey, String(Date.now()));
+        } catch {}
+        trackEvent("tg_popup_shown");
+      }
+    }, 14000);
+  
+    const onScroll = () => {
+      if (popupShownRef.current) return;
+  
+      const scrollTop = window.scrollY || 0;
+      const docHeight = document.documentElement.scrollHeight - window.innerHeight;
+      const progress = docHeight > 0 ? scrollTop / docHeight : 0;
+  
+      if (progress >= 0.45) {
+        popupShownRef.current = true;
+        clearTimeout(timer);
+        setShowTelegramPopup(true);
+        try {
+          localStorage.setItem(storageKey, String(Date.now()));
+        } catch {}
+        trackEvent("tg_popup_shown", { trigger: "scroll_45" });
+      }
+    };
+  
+    window.addEventListener("scroll", onScroll, { passive: true });
+  
+    return () => {
+      clearTimeout(timer);
+      window.removeEventListener("scroll", onScroll);
+    };
+  }, [location.pathname]);
+
+  const handleTelegramPopupClose = () => {
+    setShowTelegramPopup(false);
+    trackEvent("tg_popup_closed");
+  };
+  
+  const handleTelegramSubscribeClick = () => {
+    trackEvent("tg_popup_subscribe_click");
+    window.open("https://t.me/allspacenews", "_blank", "noopener,noreferrer");
+    setShowTelegramPopup(false);
+  };
   
   // ======= ФИЛЬТРЫ =======
   // активный таб (подсветка)
@@ -177,6 +693,65 @@ function App() {
         .filter(Boolean)
     )
   );
+
+  // ДОБАВЬ ЭТИ РЕФЫ в App() рядом с другими useRef:
+const topMarqueeTrackRef = useRef(null);
+const bottomMarqueeTrackRef = useRef(null);
+
+// список городов для бегущих строк:
+// если из БД города не пришли — используем CITIES
+const tickerCities = useMemo(
+  () => CITIES.map((c) => c.name),
+  []
+);
+
+const tickerText = useMemo(() => {
+  const base = tickerCities.join(" • ");
+  return `${base} • ${base} • ${base}`;
+}, [tickerCities]);
+
+// ДОБАВЬ ЭТОТ useEffect в App() (после остальных useEffect — норм)
+useEffect(() => {
+  const top = topMarqueeTrackRef.current;
+  const bottom = bottomMarqueeTrackRef.current;
+  if (!top || !bottom) return;
+
+  let raf = 0;
+
+  const update = () => {
+    const y = window.scrollY || 0;
+  
+    const topLoop = Math.max(1, top.scrollWidth / 2);
+    const bottomLoop = Math.max(1, bottom.scrollWidth / 2);
+  
+    const speedTop = 0.35;
+    const speedBottom = 0.35;
+  
+    const xTop = (y * speedTop) % topLoop;          // 0..topLoop
+    const xBottom = (y * speedBottom) % bottomLoop; // 0..bottomLoop
+  
+    // ВСЕГДА влево (чтобы не было "пустоты" слева)
+    top.style.transform = `translate3d(${-xTop}px, 0, 0)`;
+  
+    // нижнюю "разворачиваем" фазой: стартуем со смещения -bottomLoop
+    bottom.style.transform = `translate3d(${xBottom - bottomLoop}px, 0, 0)`;
+  };
+
+  const onScroll = () => {
+    cancelAnimationFrame(raf);
+    raf = requestAnimationFrame(update);
+  };
+
+  update();
+  window.addEventListener("scroll", onScroll, { passive: true });
+  window.addEventListener("resize", update);
+
+  return () => {
+    cancelAnimationFrame(raf);
+    window.removeEventListener("scroll", onScroll);
+    window.removeEventListener("resize", update);
+  };
+}, [tickerText]);
 
   // при первой загрузке данных из БД — включаем все опции как выбранные
   useEffect(() => {
@@ -404,41 +979,101 @@ function App() {
     });
   };
 
-  // --- Яндекс-карта ---
+  // --- Яндекс-карта на главной ---
   useEffect(() => {
-    if (typeof window === "undefined") return;
+    if (typeof window === "undefined" || location.pathname !== "/") return undefined;
+    if (placesLoading || !routeMapPlaces.length) return undefined;
+
+    document
+      .querySelectorAll('link[data-yandex-glyphicons="true"], link[href*="bootstrap/3.3.4/css/bootstrap.min.css"]')
+      .forEach((node) => node.remove());
+
+    let cancelled = false;
+    let existingScriptLoadHandler = null;
 
     const initMap = () => {
-      if (!window.ymaps) return;
+      if (cancelled || !window.ymaps) return;
       const container = document.getElementById("yandex-map");
       if (!container) return;
 
-      if (container.dataset.inited === "true") return;
-      container.dataset.inited = "true";
+      if (routeMapInstanceRef.current) {
+        routeMapInstanceRef.current.destroy();
+        routeMapInstanceRef.current = null;
+      }
 
-      const map = new window.ymaps.Map("yandex-map", {
-        center: [55.751244, 37.618423],
-        zoom: 11,
-        controls: ["zoomControl", "geolocationControl"],
+      const map = new window.ymaps.Map(container, {
+        center: [57.5, 37.6],
+        zoom: 5,
+        controls: ["zoomControl", "fullscreenControl"],
       });
+      routeMapInstanceRef.current = map;
 
-      const placemark = new window.ymaps.Placemark(
-        [55.751244, 37.618423],
-        {
-          hintContent: "Рабочее место мечты",
-          balloonContent: "Пример точки на карте",
-        },
-        {
-          preset: "islands#greenIcon",
-        }
+      const markerLayout = window.ymaps.templateLayoutFactory.createClass(
+        '<div class="route-map-marker {{ properties.markerClass }}"><span class="route-map-marker__icon"></span></div>'
       );
 
-      map.geoObjects.add(placemark);
+      const updateMarkerScale = () => {
+        container.style.setProperty(
+          "--route-map-marker-scale",
+          String(getRouteMapMarkerScale(map.getZoom()))
+        );
+      };
+
+      const geoObjects = new window.ymaps.GeoObjectCollection();
+
+      routeMapPlaces.forEach((place) => {
+        const placemark = new window.ymaps.Placemark(
+          [place.mapLatitude, place.mapLongitude],
+          {
+            hintContent: escapeHtml(place.name || "Место"),
+            balloonContentBody: buildRouteMapBalloon(place),
+            markerClass: getPlaceMarkerClass(place.type, place.isFallbackCoordinate),
+          },
+          {
+            iconLayout: markerLayout,
+            iconOffset: [-12, -30],
+            iconShape: {
+              type: "Circle",
+              coordinates: [12, 14],
+              radius: 12,
+            },
+          }
+        );
+
+        geoObjects.add(placemark);
+      });
+
+      map.geoObjects.add(geoObjects);
+      updateMarkerScale();
+      map.events.add("boundschange", updateMarkerScale);
+
+      if (routeMapPlaces.length === 1) {
+        const [place] = routeMapPlaces;
+        map.setCenter([place.mapLatitude, place.mapLongitude], 13, {
+          duration: 250,
+        });
+        return;
+      }
+
+      const bounds = geoObjects.getBounds();
+      if (bounds) {
+        map.setBounds(bounds, {
+          checkZoomRange: true,
+          zoomMargin: ROUTE_MAP_ZOOM_MARGIN,
+          duration: 250,
+        });
+      }
     };
 
     if (window.ymaps) {
       window.ymaps.ready(initMap);
-      return;
+      return () => {
+        cancelled = true;
+        if (routeMapInstanceRef.current) {
+          routeMapInstanceRef.current.destroy();
+          routeMapInstanceRef.current = null;
+        }
+      };
     }
 
     const existingScript = document.querySelector(
@@ -446,16 +1081,62 @@ function App() {
     );
 
     if (existingScript) {
-      existingScript.addEventListener("load", () => window.ymaps.ready(initMap));
-      return;
+      existingScriptLoadHandler = () => window.ymaps?.ready(initMap);
+      existingScript.addEventListener("load", existingScriptLoadHandler);
+      return () => {
+        cancelled = true;
+        if (existingScriptLoadHandler) {
+          existingScript.removeEventListener("load", existingScriptLoadHandler);
+        }
+        if (routeMapInstanceRef.current) {
+          routeMapInstanceRef.current.destroy();
+          routeMapInstanceRef.current = null;
+        }
+      };
     }
 
     const script = document.createElement("script");
     script.src = "https://api-maps.yandex.ru/2.1/?lang=ru_RU";
     script.async = true;
-    script.onload = () => window.ymaps.ready(initMap);
+    script.onload = () => window.ymaps?.ready(initMap);
     document.body.appendChild(script);
-  }, []);
+
+    return () => {
+      cancelled = true;
+      if (routeMapInstanceRef.current) {
+        routeMapInstanceRef.current.destroy();
+        routeMapInstanceRef.current = null;
+      }
+    };
+  }, [location.pathname, placesLoading, routeMapPlaces]);
+
+    // ======= ARTICLES (approved) =======
+    const [articles, setArticles] = useState([]);
+    const [articlesLoading, setArticlesLoading] = useState(false);
+    const [articlesError, setArticlesError] = useState("");
+  
+    useEffect(() => {
+      const fetchArticles = async () => {
+        setArticlesLoading(true);
+        setArticlesError("");
+        try {
+          const res = await fetch(`${API_BASE}/api/articles`);
+          const data = await res.json();
+          if (!data.ok) throw new Error(data.message || "Не удалось загрузить статьи");
+          setArticles(data.articles || []);
+        } catch (e) {
+          console.error("Ошибка загрузки статей:", e);
+          setArticlesError("Не удалось загрузить статьи");
+        } finally {
+          setArticlesLoading(false);
+        }
+      };
+  
+      fetchArticles();
+    }, []);
+
+  const shouldShowMoreArticlesButton =
+  Array.isArray(articles) && articles.length >= SHOW_MORE_ARTICLES_THRESHOLD;
 
   // --- анимация городов ---
   useEffect(() => {
@@ -552,23 +1233,47 @@ function App() {
     }
   };
 
+  const handleSubmitArticleClick = () => {
+    try {
+      const raw = localStorage.getItem("user");
+      if (!raw) {
+        navigate("/login");
+        return;
+      }
+  
+      const u = JSON.parse(raw);
+  
+      if (u.login === "admin") {
+        navigate("/admin");
+        return;
+      }
+  
+      navigate("/submit-article");
+    } catch (e) {
+      console.error("Не удалось прочитать user из localStorage:", e);
+      navigate("/login");
+    }
+  };
+
   return (
     <div className="page">
       {/* Шапка */}
-      <header className="header">
-        <div className="container header__inner">
-        <div className="logo" onClick={handleLogoClick}>
-          <img src="/logo1.svg" alt="SPACE logo" className="logo__image" />
-        </div>
+      {!hideMainHeader && (
+        <header className="header">
+          <div className="container header__inner">
+          <div className="logo" onClick={handleLogoClick}>
+            <img src="/logo1.svg" alt="SPACE logo" className="logo__image" />
+          </div>
 
-          <button className="profile-btn" onClick={handleProfileClick}>
-            <span className="profile-btn__icon">
-              <img src="/account.svg" alt="Профиль" className="logo__image" />
-            </span>
-            <span className="profile-btn__text">Профиль</span>
-          </button>
-        </div>
-      </header>
+            <button className="profile-btn" onClick={handleProfileClick}>
+              <span className="profile-btn__icon">
+                <img src="/account.svg" alt="Профиль" className="logo__image" />
+              </span>
+              <span className="profile-btn__text">Профиль</span>
+            </button>
+          </div>
+        </header>
+      )}
 
       <main className="main">
         <Routes>
@@ -577,6 +1282,24 @@ function App() {
             path="/"
             element={
               <>
+                <SEO
+                  title="ALLSPACE — места для работы: кафе, коворкинги и библиотеки"
+                  description="Найди идеальное место для работы: проверенные кафе, коворкинги и библиотеки с Wi-Fi, розетками, рейтингами и отзывами."
+                  url={`${SEO_SITE_URL}/`}
+                  image={`${SEO_SITE_URL}/og-default.jpg`}
+                  type="website"
+                  jsonLd={{
+                    "@context": "https://schema.org",
+                    "@type": "WebSite",
+                    name: "ALLSPACE",
+                    url: `${SEO_SITE_URL}/`,
+                    potentialAction: {
+                      "@type": "SearchAction",
+                      target: `${SEO_SITE_URL}/?q={search_term_string}`,
+                      "query-input": "required name=search_term_string",
+                    },
+                  }}
+                />
                 {/* Hero */}
                 <section className="hero">
                   <video
@@ -593,7 +1316,7 @@ function App() {
 
                   <div className="hero__overlay" />
                   <div className="container hero__content">
-                    <h1 className="hero__title">
+                    <h1 className="hero__title bicubik-title">
                       Найди идеальное место
                       <br />
                       для работы
@@ -649,45 +1372,56 @@ function App() {
 
                 {/* Карта с городами */}
                 <section className="map-section">
+              
                   <div className="container map-section__content">
-                    <h2 className="map-section__title">
+                    <h2 className="map-section__title bicubik-title">
                       Находи места по всей России
                     </h2>
                     <p className="map-section__subtitle">
                       Мы представлены во всех городах-миллионниках
                     </p>
 
-                    <div className="map-section__map-wrapper">
-                      <img
-                        src="/map-russia-new 1.png"
-                        alt="Карта России"
-                        className="map-section__map-img"
-                      />
-
-                      {orderedCities.map((city, index) => {
-                        const isVisible = index < visibleCount;
-                        return (
-                          <div
-                            key={city.id}
-                            className={
-                              "city-marker" + (isVisible ? " city-marker--visible" : "")
-                            }
-                            style={{
-                              top: city.top,
-                              left: city.left,
-                            }}
-                          >
-                            <img
-                              src="/pin-18.png"
-                              alt=""
-                              className="city-marker__pin"
-                            />
-                            <span className="city-marker__label">
-                              {city.name}
-                            </span>
+                    <div className="map-section__map-shell">
+                      <div className="map-section__map-area">
+                        {/* Верхняя бегущая строка */}
+                        <div className="map-marquee map-marquee--top" aria-hidden="true">
+                          <div className="map-marquee__track" ref={topMarqueeTrackRef}>
+                            <span className="map-marquee__text">{tickerText}</span>
+                            <span className="map-marquee__text">{tickerText}</span>
                           </div>
-                        );
-                      })}
+                        </div>
+
+                        {/* Карта + метки */}
+                        <div className="map-section__map-wrapper">
+                          <img
+                            src="/map-rf.svg"
+                            alt="Карта России"
+                            className="map-section__map-img"
+                          />
+
+                          {orderedCities.map((city, index) => {
+                            const isVisible = index < visibleCount;
+                            return (
+                              <div
+                                key={city.id}
+                                className={"city-marker" + (isVisible ? " city-marker--visible" : "")}
+                                style={{ top: city.top, left: city.left }}
+                              >
+                                <img src="/pin-18.png" alt="" className="city-marker__pin" />
+                                <span className="city-marker__label">{city.name}</span>
+                              </div>
+                            );
+                          })}
+                        </div>
+
+                        {/* Нижняя бегущая строка */}
+                        <div className="map-marquee map-marquee--bottom" aria-hidden="true">
+                          <div className="map-marquee__track" ref={bottomMarqueeTrackRef}>
+                            <span className="map-marquee__text">{tickerText}</span>
+                            <span className="map-marquee__text">{tickerText}</span>
+                          </div>
+                        </div>
+                      </div>
                     </div>
                   </div>
                 </section>
@@ -818,7 +1552,14 @@ function App() {
                         <article
                           key={place.id}
                           className="place-card"
-                          onClick={() => navigate(`/place/${place.id}`)}
+                          onClick={() => {
+                            trackEvent("place_card_click", {
+                              placeId: place.id,
+                              placeName: place.name,
+                              city: place.city || "",
+                            });
+                            navigate(`/place/${place.id}`);
+                          }}
                         >
                           <div className="place-card__image-wrapper">
                           <img
@@ -935,13 +1676,134 @@ function App() {
                     </div>
                   </div>
                 </section>
+                {/* ====== ARTICLES ====== */}
+                <section className="articles">
+                  <div className="container">
+                    <h2 className="articles__title bicubik-title">Интересные статьи</h2>
+
+                    {/* Пустое состояние */}
+                    {!articlesLoading && !articlesError && (!articles || articles.length === 0) && (
+                      <div className="articles-empty">
+                        <p className="articles-empty__subtitle">
+                          Здесь пока ничего нет, но скоро появятся обучающие <br />
+                          или интересные статьи на тему фриланса и не только
+                        </p>
+
+                        <div className="articles-empty__art">
+                          {/* можно заменить на svg если сделаешь, пока так: */}
+                          <img
+                            src="/articles-empty.png"
+                            alt=""
+                            className="articles-empty__img"
+                            onError={(e) => (e.currentTarget.style.display = "none")}
+                          />
+                          {/* если нет картинки — просто пустой блок, но стили дадут размер */}
+                        </div>
+
+                        <button className="articles__add-btn" onClick={handleSubmitArticleClick}>
+                          Добавить
+                        </button>
+                      </div>
+                    )}
+
+                    {/* Ошибка / загрузка */}
+                    {articlesLoading && (
+                      <p className="articles__hint">Загружаем статьи...</p>
+                    )}
+                    {articlesError && (
+                      <p className="articles__hint articles__hint--error">{articlesError}</p>
+                    )}
+
+                    {/* Список статей */}
+                    {!articlesLoading && !articlesError && Array.isArray(articles) && articles.length > 0 && (
+                      <>
+                        <div className="articles-grid">
+                          {articles.slice(0, HOME_ARTICLES_LIMIT).map((a) => (
+                            <article
+                              key={a.id}
+                              className="article-card"
+                              onClick={() => {
+                                trackEvent("article_card_click", {
+                                  articleId: a.id,
+                                  articleTitle: a.title,
+                                });
+                                navigate(`/article/${a.id}`);
+                              }}
+                            >
+                              <div className="article-card__img-wrap">
+                                <img
+                                  src={resolveMediaUrl(a.coverImage || "/no-photo.png")}
+                                  alt={a.title || "Статья"}
+                                  className="article-card__img"
+                                  onError={(e) => (e.currentTarget.src = "/no-photo.png")}
+                                />
+                              </div>
+
+                              <div className="article-card__body">
+                              <div className="article-card__author-row">
+                                <div className="article-card__avatar">
+                                  <img
+                                    src={resolveMediaUrl(a.authorAvatar || "/account.svg")}
+                                    alt={a.authorName || a.authorLogin || "Автор"}
+                                    className="article-card__avatar-img"
+                                    onError={(e) => {
+                                      e.currentTarget.src = "/account.svg";
+                                    }}
+                                  />
+                                </div>
+                                <div className="article-card__author-meta">
+                                  <div className="article-card__author">
+                                    {a.authorName || a.authorLogin || "Автор"}
+                                  </div>
+                                  <div className="article-card__time">
+                                    {a.publishedAtHuman || formatArticleDate(a.publishedAt || a.createdAt)}
+                                  </div>
+                                </div>
+                              </div>
+
+                                <h3 className="article-card__title">
+                                  {a.title || "Без названия"}
+                                </h3>
+
+                                <p className="article-card__excerpt">
+                                  {a.excerpt || a.description || "…"}
+                                </p>
+                              </div>
+                            </article>
+                          ))}
+                        </div>
+                        <div className="articles-actions">
+                          <button
+                            className="articles__add-btn"
+                            onClick={() => navigate("/submit-article")}
+                          >
+                            Добавить
+                          </button>
+
+                          {shouldShowMoreArticlesButton && (
+                            <button
+                              className="articles__more-btn"
+                              onClick={() => navigate("/articles")}
+                            >
+                              Показать еще
+                            </button>
+                          )}
+                        </div>
+                      </>
+                    )}
+                  </div>
+                </section>
 
                 {/* Яндекс-карта: маршрут */}
                 <section className="route-map">
                   <div className="route-map__inner">
-                    <h2 className="route-map__title">
-                      Построй маршрут к рабочему месту мечты
+                    <h2 className="route-map__title bicubik-title">
+                      Все места на одной карте
                     </h2>
+                    <p className="route-map__subtitle">
+                      На карте отмечены все локации, которые уже есть на сайте:{" "}
+                      {routeMapPlaces.length}
+                    </p>
 
                     <div className="route-map__map-wrapper">
                       <div id="yandex-map" className="route-map__map" />
@@ -952,7 +1814,7 @@ function App() {
                 {/* CTA снизу */}
                 <section className="footer-cta">
                   <div className="footer-cta__inner">
-                    <h2 className="footer-cta__title">
+                    <h2 className="footer-cta__title bicubik-title">
                       Знаешь отличное место?
                     </h2>
                     <p className="footer-cta__subtitle">
@@ -981,9 +1843,65 @@ function App() {
             element={<ProfilePage onLogout={() => setIsLoggedIn(false)} />}
           />
           <Route path="/admin" element={<AdminPage />} />
-	  <Route path="/submit-place" element={<SubmitPlacePage />} />
+	        <Route path="/submit-place" element={<SubmitPlacePage />} />
+          <Route path="/submit-article" element={<SubmitArticlePage />} />
+          <Route path="/article/:id" element={<ArticlePage />} />
+          <Route
+            path="/articles"
+            element={
+              <ArticlesListPage
+                articles={articles}
+                articlesLoading={articlesLoading}
+                articlesError={articlesError}
+                navigate={navigate}
+              />
+            }
+          />
         </Routes>
       </main>
+
+      {showTelegramPopup && (
+        <div className="tg-popup-overlay" onClick={handleTelegramPopupClose}>
+          <div className="tg-popup" onClick={(e) => e.stopPropagation()}>
+            <button
+              type="button"
+              className="tg-popup__close"
+              onClick={handleTelegramPopupClose}
+              aria-label="Закрыть"
+            >
+              ×
+            </button>
+
+            <img
+              src="/tg-icon.svg"
+              alt="Telegram"
+              className="tg-popup__icon"
+            />
+
+            <h3 className="tg-popup__title">
+              Подпишитесь на наш
+              <br />
+              телеграм-канал
+            </h3>
+
+            <p className="tg-popup__text">
+              Там новости из мира айти и удалёнки, мемы,
+              <br />
+              обзоры мест, полезности.
+              <br />
+              В общем, оно того стоит
+            </p>
+
+            <button
+              type="button"
+              className="tg-popup__btn"
+              onClick={handleTelegramSubscribeClick}
+            >
+              Подписаться
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* Нижний футер */}
       <footer className="footer">
@@ -1005,4 +1923,3 @@ function App() {
 }
 
 export default App;
-

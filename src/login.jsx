@@ -2,8 +2,15 @@
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import "./App.css";
+import SEO, { SEO_SITE_URL } from "./SEO.jsx";
+import { API_BASE } from "./api.js";
 
-const API_BASE = import.meta.env.VITE_API_BASE || (import.meta.env.PROD ? "/api" : "http://localhost:3001");
+<SEO
+  title="Вход — ALLSPACE"
+  description="Вход в аккаунт ALLSPACE."
+  url={`${SEO_SITE_URL}/login`}
+  noindex={true}
+/>
 
 function LoginPage({ onLogin }) {
   const navigate = useNavigate();
@@ -158,4 +165,3 @@ function LoginPage({ onLogin }) {
 }
 
 export default LoginPage;
-

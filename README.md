@@ -14,3 +14,36 @@ The React Compiler is not enabled on this template because of its impact on dev 
 ## Expanding the ESLint configuration
 
 If you are developing a production application, we recommend using TypeScript with type-aware lint rules enabled. Check out the [TS template](https://github.com/vitejs/vite/tree/main/packages/create-vite/template-react-ts) for information on how to integrate TypeScript and [`typescript-eslint`](https://typescript-eslint.io) in your project.
+
+## Docker
+
+Run the whole project:
+
+```bash
+docker compose up --build
+```
+
+After startup:
+
+- frontend: `http://localhost:8080`
+- backend API: `http://localhost:3001`
+
+Useful commands:
+
+```bash
+docker compose up --build -d
+docker compose logs -f
+docker compose down
+```
+
+## Staging
+
+To serve the project on `https://staging.allspace.com.ru` with TLS termination in Docker:
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.staging.yml up --build -d
+```
+
+This starts an external Caddy reverse proxy on ports `80/443`, which forwards all traffic for
+`staging.allspace.com.ru` to the frontend container. The frontend container already proxies `/api`,
+`/photos` and `/avatars` to the backend internally.

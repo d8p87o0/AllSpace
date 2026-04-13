@@ -1,3 +1,19 @@
+@font-face {
+  font-family: "Meta Pro";
+  src: url("./assets/fonts/Meta Pro Normal.ttf") format("opentype");
+  font-weight: 600;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "Bicubik";
+  src: url("./assets/fonts/Bicubik.otf") format("truetype");
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+
 *,
 *::before,
 *::after {
@@ -22,7 +38,7 @@ body,
 }
 
 body {
-  font-family: "Roboto", system-ui, -apple-system, BlinkMacSystemFont,
+  font-family: "Meta Pro", "Roboto", system-ui, -apple-system, BlinkMacSystemFont,
     "Segoe UI", sans-serif;
   color: var(--text-main);
   background-color: #f3f4f6;

@@ -1,0 +1,13 @@
+node_modules
+dist
+.git
+.gitignore
+.env
+.env.*
+server/photos
+server/avatars
+server/parsed
+server/*.db
+server/*.db-*
+*.log
+npm-debug.log*

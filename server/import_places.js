@@ -23,7 +23,11 @@ const inputPath = path.isAbsolute(inputPathArg)
 
 const dbPath = path.resolve(__dirname, "users.db");
 const photosRoot = path.resolve(__dirname, "photos");
-const PHOTO_BASE = "http://localhost:3001"; // чтобы картинки точно открывались с фронта
+const PHOTO_BASE = (
+  process.env.PHOTO_BASE ||
+  process.env.PUBLIC_BASE_URL ||
+  "https://allspace.com.ru"
+).replace(/\/$/, "");
 
 function dbAll(db, sql, params = []) {
   return new Promise((resolve, reject) => {
@@ -57,18 +61,19 @@ function normalizeKey(s = "") {
 function findFolderByName(placeName) {
   if (!placeName || !fs.existsSync(photosRoot)) return null;
 
-  const dirs = fs.readdirSync(photosRoot, { withFileTypes: true })
+  const dirs = fs
+    .readdirSync(photosRoot, { withFileTypes: true })
     .filter((d) => d.isDirectory())
     .map((d) => d.name);
 
   const target = normalizeKey(placeName);
 
-  // 1) точное совпадение по нормализованному имени
   const exact = dirs.find((d) => normalizeKey(d) === target);
   if (exact) return exact;
 
-  // 2) если не нашли — попробуем contains (мягкий матч)
-  const soft = dirs.find((d) => normalizeKey(d).includes(target) || target.includes(normalizeKey(d)));
+  const soft = dirs.find(
+    (d) => normalizeKey(d).includes(target) || target.includes(normalizeKey(d))
+  );
   return soft || null;
 }
 
@@ -77,14 +82,16 @@ function listPhotos(folderName) {
   const folderPath = path.join(photosRoot, folderName);
   if (!fs.existsSync(folderPath)) return [];
 
-  const files = fs.readdirSync(folderPath, { withFileTypes: true })
+  const files = fs
+    .readdirSync(folderPath, { withFileTypes: true })
     .filter((e) => e.isFile())
     .map((e) => e.name)
     .filter((f) => /\.(jpg|jpeg|png|webp)$/i.test(f))
     .sort((a, b) => a.localeCompare(b, "ru"));
 
-  return files.map((f) =>
-    `${PHOTO_BASE}/photos/${encodeURIComponent(folderName)}/${encodeURIComponent(f)}`
+  return files.map(
+    (f) =>
+      `${PHOTO_BASE}/photos/${encodeURIComponent(folderName)}/${encodeURIComponent(f)}`
   );
 }
 
@@ -95,7 +102,6 @@ function toArray(v) {
   return [];
 }
 
-// ⚠️ тут “универсально” вытаскиваем поля из твоего JSON
 function mapRecord(rec) {
   const name = rec.name || rec.title || rec.place || rec.coworking || "";
   const city = rec.city || rec.town || rec.location_city || "";
@@ -104,20 +110,13 @@ function mapRecord(rec) {
 
   const rating = rec.rating ?? rec.rate ?? null;
   const reviews = rec.reviews ?? rec.reviews_count ?? rec.reviewsCount ?? null;
-
-  // тип — если в JSON нет, ставим “Коворкинг”
   const type = rec.type || rec.category || "Коворкинг";
-
-  // фичи/удобства (если есть)
   const features = toArray(rec.features || rec.amenities || rec.tags);
-
-  // badge — если есть, иначе пусто
   const badge = rec.badge || "";
 
-  // фото: ищем папку по названию места
   const folder = findFolderByName(name);
   const photos = listPhotos(folder);
-  const image = photos[0] || null; // ⭐ главное фото для карточки
+  const image = photos[0] || null;
 
   return {
     name,
@@ -148,7 +147,9 @@ async function main() {
   const rows = pickArray(parsed);
 
   if (!rows.length) {
-    console.error("В JSON не найден массив мест (ожидал массив или {items:[]}/{places:[]}).");
+    console.error(
+      "В JSON не найден массив мест (ожидал массив или {items:[]}/{places:[]})."
+    );
     process.exit(1);
   }
 
@@ -170,8 +171,6 @@ async function main() {
 
     for (const rec of rows) {
       const p = mapRecord(rec);
-
-      // берём только колонки, которые реально есть в places
       const insertCols = Object.keys(p).filter((k) => columns.includes(k));
       const values = insertCols.map((k) => p[k]);
 
@@ -185,11 +184,15 @@ async function main() {
     }
 
     await dbRun(db, "COMMIT");
-    console.log(`✅ Импорт: добавлено мест: ${inserted}`);
-    console.log(`📸 Без найденных фото: ${withoutPhotos} (проверь совпадение названий папок)`);
+    console.log(`Импорт: добавлено мест: ${inserted}`);
+    console.log(
+      `Без найденных фото: ${withoutPhotos} (проверь совпадение названий папок)`
+    );
   } catch (e) {
-    try { await dbRun(db, "ROLLBACK"); } catch {}
-    console.error("❌ Ошибка импорта:", e?.message || e);
+    try {
+      await dbRun(db, "ROLLBACK");
+    } catch {}
+    console.error("Ошибка импорта:", e?.message || e);
     process.exitCode = 1;
   } finally {
     db.close();

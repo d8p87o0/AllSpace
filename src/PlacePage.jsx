@@ -1,29 +1,11 @@
 ﻿// src/PlacePage.jsx
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useParams, useNavigate } from "react-router-dom";
-
-const API_BASE = import.meta.env.VITE_API_BASE || (import.meta.env.PROD ? "/api" : "http://localhost:3001");
+import SEO, { SEO_SITE_URL } from "./SEO.jsx";
+import { API_BASE } from "./api.js";
 const FAVORITES_PREFIX = "favoritePlaces_";
-// Доп. описание и особенности для мест
+const REVIEW_IMAGES_LIMIT = 6;
 
-const PLACE_DETAILS = {
-  1: {
-    description:
-      "Уютное кафе в центре города с отличным кофе и комфортной атмосферой для работы. Просторный зал, много розеток, быстрый Wi-Fi. Идеально подходит для фрилансеров и удалённых сотрудников.",
-    wifi: "100 Мбит/с, стабильное подключение",
-    noise: "Тихо · 4.5/5",
-    sockets: "Розетки у каждого столика",
-    avgCheck: "300–500 ₽",
-  },
-  default: {
-    description:
-      "Уютное место для работы и встреч. Есть Wi-Fi, розетки и комфортная атмосфера.",
-    wifi: "Быстрый Wi-Fi",
-    noise: "Средний уровень шума",
-    sockets: "Розетки в зале",
-    avgCheck: "Средний чек 300–700 ₽",
-  },
-};
 // Краткие описания и иконки для фич из БД
 const FEATURE_CONFIG = {
   "расположение": {
@@ -75,6 +57,153 @@ function getInitials(name) {
   return (first + second).toUpperCase();
 }
 
+function resolveMediaUrl(url) {
+  if (!url) return url;
+  if (url.startsWith("/photos/")) return `${API_BASE}${url}`;
+  return url;
+}
+
+function normalizePhoneForLink(phone) {
+  if (!phone) return null;
+  const cleaned = String(phone).replace(/[^\d+]/g, "");
+  return cleaned || null;
+}
+
+function buildAddressQuery(place) {
+  const address = String(place?.address || "").trim();
+  const city = String(place?.city || "").trim();
+
+  if (!address) return city || "";
+  if (!city) return address;
+  if (address.toLowerCase().includes(city.toLowerCase())) return address;
+
+  return `${address}, ${city}`;
+}
+
+function buildYandexRouteUrl(place) {
+  const query = buildAddressQuery(place);
+  return query ? `https://yandex.ru/maps/?text=${encodeURIComponent(query)}` : null;
+}
+
+function getPlaceCoordinates(place) {
+  const latitude = Number(place?.latitude);
+  const longitude = Number(place?.longitude);
+
+  if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) {
+    return null;
+  }
+
+  return { latitude, longitude };
+}
+
+function buildYandexPointUrl(place, basePath = "/maps/") {
+  const coords = getPlaceCoordinates(place);
+  if (!coords) return null;
+
+  const lon = coords.longitude.toFixed(6);
+  const lat = coords.latitude.toFixed(6);
+  const ll = `${lon},${lat}`;
+  const pt = `${lon},${lat},pm2rdm`;
+
+  return `https://yandex.ru${basePath}?ll=${encodeURIComponent(ll)}&z=16&pt=${encodeURIComponent(pt)}`;
+}
+
+function buildYandexSearchQuery(place) {
+  return [place?.name, buildAddressQuery(place)].filter(Boolean).join(", ").trim();
+}
+
+function buildPlaceRouteUrl(place) {
+  const pointUrl = buildYandexPointUrl(place);
+  if (pointUrl) {
+    return pointUrl;
+  }
+
+  const rawLink = typeof place?.link === "string" ? place.link.trim() : "";
+  if (/^https?:\/\/(?:www\.)?yandex\.ru\//i.test(rawLink)) {
+    return rawLink;
+  }
+
+  return buildYandexRouteUrl(place) || null;
+}
+
+function buildYandexMapWidgetUrl(place) {
+  const pointWidgetUrl = buildYandexPointUrl(place, "/map-widget/v1/");
+  if (pointWidgetUrl) {
+    return pointWidgetUrl;
+  }
+
+  const routeUrl = buildPlaceRouteUrl(place);
+  if (!routeUrl) return null;
+
+  try {
+    const url = new URL(routeUrl);
+    const hasSearchText = Boolean(url.searchParams.get("text"));
+
+    if (hasSearchText) {
+      const searchQuery = buildYandexSearchQuery(place);
+      return `https://yandex.ru/map-widget/v1/?mode=search&text=${encodeURIComponent(searchQuery)}`;
+    }
+
+    return routeUrl.replace(
+      /^https?:\/\/(?:www\.)?yandex\.ru\/maps/i,
+      "https://yandex.ru/map-widget/v1"
+    );
+  } catch {
+    return routeUrl.replace(
+      /^https?:\/\/(?:www\.)?yandex\.ru\/maps/i,
+      "https://yandex.ru/map-widget/v1"
+    );
+  }
+}
+
+function getPlaceMarkerClass(type) {
+  const normalizedType = String(type || "").toLowerCase();
+
+  if (normalizedType.includes("коф")) return "route-map-marker--coffee";
+  if (normalizedType.includes("библи")) return "route-map-marker--library";
+  if (normalizedType.includes("бар")) return "route-map-marker--bar";
+  if (normalizedType.includes("антикаф")) return "route-map-marker--anticafe";
+  if (normalizedType.includes("коворк")) return "route-map-marker--coworking";
+
+  return "route-map-marker--default";
+}
+
+function escapeHtml(value) {
+  return String(value ?? "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
+function hoursToLines(hours) {
+  if (!hours) return [];
+  return String(hours)
+    .replace(/\r/g, "\n")
+    .split("\n")
+    .map((line) => line.trim())
+    .filter(Boolean);
+}
+
+function isSameUser(review, currentUser) {
+  if (!review || !currentUser) return false;
+
+  const currentUserId = Number(currentUser.id);
+  const reviewUserId = Number(review.userId);
+  if (
+    Number.isFinite(currentUserId) &&
+    Number.isFinite(reviewUserId) &&
+    currentUserId === reviewUserId
+  ) {
+    return true;
+  }
+
+  const userLogin = (currentUser.login || "").trim();
+  const reviewLogin = (review.userLogin || "").trim();
+  return Boolean(userLogin && reviewLogin && userLogin === reviewLogin);
+}
+
 function formatReviewDate(value) {
   if (!value) return "";
   const date = new Date(value);
@@ -105,33 +234,6 @@ function buildGalleryImages(src) {
   return images;
 }
 
-function resolveMediaUrl(url) {
-  if (!url) return url;
-
-  // абсолютные ссылки не трогаем
-  if (/^https?:\/\//i.test(url)) return url;
-
-  // если это локальная статика сервера: /photos/...
-  if (url.startsWith("/photos/")) return `${API_BASE}${url}`;
-
-  // любые другие относительные пути оставляем как есть (например /p1p1.png из public)
-  return url;
-}
-
-function normalizePhoneForLink(phone) {
-  if (!phone) return null;
-  const cleaned = String(phone).replace(/[^\d+]/g, "");
-  return cleaned || null;
-}
-
-function hoursToLines(hours) {
-  if (!hours) return [];
-  return String(hours)
-    .replace(/\r/g, "\n")
-    .split("\n")
-    .map((l) => l.trim())
-    .filter(Boolean);
-}
 
 export default function PlacePage() {
   const { id } = useParams();
@@ -152,12 +254,45 @@ export default function PlacePage() {
   const [reviewsError, setReviewsError] = useState("");
   const [reviewText, setReviewText] = useState("");
   const [reviewRating, setReviewRating] = useState(5);
+  const [reviewImages, setReviewImages] = useState([]);
+  const [reviewImageError, setReviewImageError] = useState("");
   const [reviewSubmitting, setReviewSubmitting] = useState(false);
   const [submitMessage, setSubmitMessage] = useState("");
   const [isReviewFormOpen, setIsReviewFormOpen] = useState(false);
+  const [editingReviewId, setEditingReviewId] = useState(null);
+  const [editReviewText, setEditReviewText] = useState("");
+  const [editReviewRating, setEditReviewRating] = useState(5);
+  const [editReviewImages, setEditReviewImages] = useState([]);
+  const [editReviewImageError, setEditReviewImageError] = useState("");
+  const [editReviewError, setEditReviewError] = useState("");
+  const [editReviewSaving, setEditReviewSaving] = useState(false);
+  const [reviewDeletingId, setReviewDeletingId] = useState(null);
+  const placeMapRef = useRef(null);
+  const placeMapInstanceRef = useRef(null);
+  const [reviewActionError, setReviewActionError] = useState("");
 
 
   const getFavoritesKey = (login) => `${FAVORITES_PREFIX}${login}`;
+  const clearReviewImages = () => {
+    setReviewImages((prev) => {
+      prev.forEach((img) => {
+        if (img.previewUrl) {
+          URL.revokeObjectURL(img.previewUrl);
+        }
+      });
+      return [];
+    });
+  };
+  const clearEditReviewImages = () => {
+    setEditReviewImages((prev) => {
+      prev.forEach((img) => {
+        if (img?.file && img.previewUrl) {
+          URL.revokeObjectURL(img.previewUrl);
+        }
+      });
+      return [];
+    });
+  };
 
   // сброс UI при смене id
   useEffect(() => {
@@ -254,8 +389,19 @@ export default function PlacePage() {
   useEffect(() => {
     setReviewText("");
     setReviewRating(5);
+    clearReviewImages();
+    setReviewImageError("");
     setSubmitMessage("");
     setIsReviewFormOpen(false);
+    clearEditReviewImages();
+    setEditingReviewId(null);
+    setEditReviewText("");
+    setEditReviewRating(5);
+    setEditReviewImageError("");
+    setEditReviewError("");
+    setEditReviewSaving(false);
+    setReviewDeletingId(null);
+    setReviewActionError("");
 
     if (!Number.isFinite(placeId)) {
       setReviews([]);
@@ -269,6 +415,7 @@ export default function PlacePage() {
       setReviewsLoading(true);
       setReviewsError("");
       setSubmitMessage("");
+      setReviewActionError("");
 
       try {
         const res = await fetch(`${API_BASE}/api/places/${placeId}/reviews`);
@@ -338,29 +485,6 @@ export default function PlacePage() {
       }
     };
 
-    function resolveMediaUrl(url) {
-      if (!url) return url;
-      // если URL начинается с /photos/... — это лежит на API , а не на Vite (5173)
-      if (url.startsWith("/photos/")) return `${API_BASE}${url}`;
-      return url;
-    }
-    
-    function normalizePhoneForLink(phone) {
-      if (!phone) return null;
-      // оставим + и цифры
-      const cleaned = String(phone).replace(/[^\d+]/g, "");
-      return cleaned || null;
-    }
-    
-    function hoursToLines(hours) {
-      if (!hours) return [];
-      return String(hours)
-        .replace(/\r/g, "\n")
-        .split("\n")
-        .map((l) => l.trim())
-        .filter(Boolean);
-    }
-
     // 1) Если у места есть images из БД — используем их
     if (Array.isArray(place.images) && place.images.length) {
       setGalleryImages(place.images);
@@ -385,6 +509,125 @@ export default function PlacePage() {
     })();
   }, [place]);
 
+  useEffect(() => {
+    if (typeof window === "undefined") return undefined;
+
+    const coords = getPlaceCoordinates(place);
+    const container = placeMapRef.current;
+
+    if (!coords || !container) {
+      if (placeMapInstanceRef.current) {
+        placeMapInstanceRef.current.destroy();
+        placeMapInstanceRef.current = null;
+      }
+      return undefined;
+    }
+
+    let cancelled = false;
+    let existingScriptLoadHandler = null;
+
+    const initMap = () => {
+      if (cancelled || !window.ymaps || !placeMapRef.current) return;
+
+      if (placeMapInstanceRef.current) {
+        placeMapInstanceRef.current.destroy();
+        placeMapInstanceRef.current = null;
+      }
+
+      const map = new window.ymaps.Map(placeMapRef.current, {
+        center: [coords.latitude, coords.longitude],
+        zoom: 16,
+        controls: ["zoomControl"],
+      });
+
+      placeMapInstanceRef.current = map;
+
+      const markerLayout = window.ymaps.templateLayoutFactory.createClass(
+        '<div class="route-map-marker {{ properties.markerClass }}"><span class="route-map-marker__icon"></span></div>'
+      );
+
+      const placemark = new window.ymaps.Placemark(
+        [coords.latitude, coords.longitude],
+        {
+          hintContent: escapeHtml(place?.name || "Место"),
+          balloonContentBody: `
+            <div class="route-map-balloon">
+              <div class="route-map-balloon__title">${escapeHtml(place?.name || "Место")}</div>
+              <div class="route-map-balloon__meta">${escapeHtml(place?.type || "Место")}${place?.city ? `, ${escapeHtml(place.city)}` : ""}</div>
+              ${place?.address ? `<div class="route-map-balloon__address">${escapeHtml(place.address)}</div>` : ""}
+            </div>
+          `,
+          markerClass: getPlaceMarkerClass(place?.type),
+        },
+        {
+          iconLayout: markerLayout,
+          iconOffset: [-12, -30],
+          iconShape: {
+            type: "Circle",
+            coordinates: [12, 14],
+            radius: 12,
+          },
+        }
+      );
+
+      map.geoObjects.add(placemark);
+      map.behaviors.enable("scrollZoom");
+      placeMapRef.current.style.setProperty("--route-map-marker-scale", "0.64");
+    };
+
+    if (window.ymaps) {
+      window.ymaps.ready(initMap);
+      return () => {
+        cancelled = true;
+        if (placeMapInstanceRef.current) {
+          placeMapInstanceRef.current.destroy();
+          placeMapInstanceRef.current = null;
+        }
+      };
+    }
+
+    const existingScript = document.querySelector(
+      'script[src^="https://api-maps.yandex.ru/2.1/"]'
+    );
+
+    if (existingScript) {
+      existingScriptLoadHandler = () => window.ymaps?.ready(initMap);
+      existingScript.addEventListener("load", existingScriptLoadHandler);
+      return () => {
+        cancelled = true;
+        if (existingScriptLoadHandler) {
+          existingScript.removeEventListener("load", existingScriptLoadHandler);
+        }
+        if (placeMapInstanceRef.current) {
+          placeMapInstanceRef.current.destroy();
+          placeMapInstanceRef.current = null;
+        }
+      };
+    }
+
+    const script = document.createElement("script");
+    script.src = "https://api-maps.yandex.ru/2.1/?lang=ru_RU";
+    script.async = true;
+    script.onload = () => window.ymaps?.ready(initMap);
+    document.body.appendChild(script);
+
+    return () => {
+      cancelled = true;
+      if (placeMapInstanceRef.current) {
+        placeMapInstanceRef.current.destroy();
+        placeMapInstanceRef.current = null;
+      }
+    };
+  }, [
+    place?.id,
+    place?.name,
+    place?.type,
+    place?.address,
+    place?.city,
+    place?.latitude,
+    place?.longitude,
+  ]);
+
   if (loading) {
     return (
       <section className="place-page">
@@ -405,20 +648,17 @@ export default function PlacePage() {
     );
   }
 
-  const details = PLACE_DETAILS[placeId] || PLACE_DETAILS.default;
-
   const mainImage = resolveMediaUrl(
     galleryImages[activeIndex] || galleryImages[0] || place.image
   );
 
-  const hasYandexLink = Boolean(place.link);
-  const mapSrc = hasYandexLink
-    ? place.link.replace("yandex.ru/maps", "yandex.ru/map-widget/v1")
-    : null;
+  const placeCoordinates = getPlaceCoordinates(place);
+  const routeUrl = buildPlaceRouteUrl(place);
+  const mapWidgetUrl = buildYandexMapWidgetUrl(place);
 
   const handleRouteClick = () => {
-    if (place.link) {
-      window.open(place.link, "_blank", "noopener,noreferrer");
+    if (routeUrl) {
+      window.open(routeUrl, "_blank", "noopener,noreferrer");
     } else {
       alert("Ссылка на карту пока недоступна");
     }
@@ -490,13 +730,356 @@ export default function PlacePage() {
     }
   };
 
+  const userOwnReview = user
+    ? reviews.find((review) => isSameUser(review, user)) || null
+    : null;
+  const userIsAdmin = user?.login === "admin";
+  const canCreateReview = Boolean(user) && (userIsAdmin || !userOwnReview);
+
   const handleReviewButtonClick = () => {
     if (!user) {
       navigate("/login");
       return;
     }
 
+    if (!canCreateReview && userOwnReview) {
+      setReviewActionError("У вас уже есть отзыв на это место. Вы можете его редактировать.");
+      setSubmitMessage("");
+      setIsReviewFormOpen(false);
+      startReviewEdit(userOwnReview);
+      return;
+    }
+
+    setReviewActionError("");
+    setSubmitMessage("");
     setIsReviewFormOpen(true);
+  };
+
+  const handleReviewImageFiles = (filesList) => {
+    const files = Array.from(filesList || []);
+    if (!files.length) return;
+
+    setReviewImageError("");
+
+    setReviewImages((prev) => {
+      const remaining = REVIEW_IMAGES_LIMIT - prev.length;
+      if (remaining <= 0) {
+        setReviewImageError(`Можно добавить до ${REVIEW_IMAGES_LIMIT} фото`);
+        return prev;
+      }
+
+      const nextFiles = files.slice(0, remaining);
+      if (nextFiles.length < files.length) {
+        setReviewImageError(`Можно добавить до ${REVIEW_IMAGES_LIMIT} фото`);
+      }
+
+      const newItems = nextFiles.map((file, idx) => ({
+        id: `review-${Date.now()}-${idx}`,
+        file,
+        previewUrl: URL.createObjectURL(file),
+      }));
+
+      return [...prev, ...newItems];
+    });
+  };
+
+  const handleReviewImageInputChange = (event) => {
+    if (event.target.files && event.target.files.length > 0) {
+      handleReviewImageFiles(event.target.files);
+      event.target.value = "";
+    }
+  };
+
+  const handleReviewImageDrop = (event) => {
+    event.preventDefault();
+    if (event.dataTransfer.files && event.dataTransfer.files.length > 0) {
+      handleReviewImageFiles(event.dataTransfer.files);
+      event.dataTransfer.clearData();
+    }
+  };
+
+  const handleReviewImageRemove = (id) => {
+    setReviewImages((prev) => {
+      const target = prev.find((img) => img.id === id);
+      if (target?.previewUrl) {
+        URL.revokeObjectURL(target.previewUrl);
+      }
+      return prev.filter((img) => img.id !== id);
+    });
+    setReviewImageError("");
+  };
+
+  const uploadReviewImages = async (images) => {
+    const files = (images || []).map((img) => img.file).filter(Boolean);
+    if (!files.length) return [];
+
+    const formData = new FormData();
+    files.forEach((file) => formData.append("files", file));
+
+    const res = await fetch(`${API_BASE}/api/upload`, {
+      method: "POST",
+      body: formData,
+    });
+    const data = await res.json();
+
+    if (!data.ok) {
+      throw new Error(data.message || "Не удалось загрузить фото");
+    }
+
+    return data.urls || [];
+  };
+
+  const startReviewEdit = (review) => {
+    const ratingValue = Number(review?.rating);
+    const safeRating = Number.isFinite(ratingValue)
+      ? Math.min(5, Math.max(1, Math.round(ratingValue)))
+      : 5;
+    const now = Date.now();
+    const existingImages = Array.isArray(review?.images)
+      ? review.images
+          .filter((item) => typeof item === "string" && item.trim())
+          .slice(0, REVIEW_IMAGES_LIMIT)
+      : [];
+
+    clearEditReviewImages();
+    setEditingReviewId(review.id);
+    setEditReviewText(review.text || "");
+    setEditReviewRating(safeRating);
+    setEditReviewImages(
+      existingImages.map((url, index) => ({
+        id: `review-edit-existing-${review.id}-${index}-${now}`,
+        url,
+        file: null,
+        isNew: false,
+        previewUrl: resolveMediaUrl(url),
+      }))
+    );
+    setEditReviewImageError("");
+    setEditReviewError("");
+    setReviewActionError("");
+    setSubmitMessage("");
+  };
+
+  const cancelReviewEdit = () => {
+    clearEditReviewImages();
+    setEditingReviewId(null);
+    setEditReviewText("");
+    setEditReviewRating(5);
+    setEditReviewImageError("");
+    setEditReviewError("");
+  };
+
+  const handleEditReviewImageFiles = (filesList) => {
+    const files = Array.from(filesList || []);
+    if (!files.length) return;
+
+    setEditReviewImageError("");
+
+    setEditReviewImages((prev) => {
+      const remaining = REVIEW_IMAGES_LIMIT - prev.length;
+      if (remaining <= 0) {
+        setEditReviewImageError(`Можно добавить до ${REVIEW_IMAGES_LIMIT} фото`);
+        return prev;
+      }
+
+      const nextFiles = files.slice(0, remaining);
+      if (nextFiles.length < files.length) {
+        setEditReviewImageError(`Можно добавить до ${REVIEW_IMAGES_LIMIT} фото`);
+      }
+
+      const newItems = nextFiles.map((file, idx) => ({
+        id: `review-edit-${Date.now()}-${idx}`,
+        url: null,
+        file,
+        isNew: true,
+        previewUrl: URL.createObjectURL(file),
+      }));
+
+      return [...prev, ...newItems];
+    });
+  };
+
+  const handleEditReviewImageInputChange = (event) => {
+    if (event.target.files && event.target.files.length > 0) {
+      handleEditReviewImageFiles(event.target.files);
+      event.target.value = "";
+    }
+  };
+
+  const handleEditReviewImageDrop = (event) => {
+    event.preventDefault();
+    if (event.dataTransfer.files && event.dataTransfer.files.length > 0) {
+      handleEditReviewImageFiles(event.dataTransfer.files);
+      event.dataTransfer.clearData();
+    }
+  };
+
+  const handleEditReviewImageRemove = (id) => {
+    setEditReviewImages((prev) => {
+      const target = prev.find((img) => img.id === id);
+      if (target?.file && target.previewUrl) {
+        URL.revokeObjectURL(target.previewUrl);
+      }
+      return prev.filter((img) => img.id !== id);
+    });
+    setEditReviewImageError("");
+  };
+
+  const handleReviewUpdate = async (reviewId) => {
+    if (!user) {
+      navigate("/login");
+      return;
+    }
+
+    const textValue = editReviewText.trim();
+    const ratingValue = Number(editReviewRating);
+
+    if (!textValue) {
+      setEditReviewError("Добавьте текст отзыва");
+      return;
+    }
+
+    if (!Number.isInteger(ratingValue) || ratingValue < 1 || ratingValue > 5) {
+      setEditReviewError("Оценка должна быть от 1 до 5");
+      return;
+    }
+
+    setEditReviewSaving(true);
+    setEditReviewError("");
+    setEditReviewImageError("");
+    setReviewActionError("");
+
+    try {
+      const existingImageUrls = editReviewImages
+        .filter(
+          (img) =>
+            !img?.isNew && typeof img?.url === "string" && img.url.trim()
+        )
+        .map((img) => img.url.trim());
+      const uploadedUrls = await uploadReviewImages(
+        editReviewImages.filter((img) => img?.isNew && img.file)
+      );
+      const nextImages = [...existingImageUrls, ...uploadedUrls].slice(
+        0,
+        REVIEW_IMAGES_LIMIT
+      );
+
+      const res = await fetch(
+        `${API_BASE}/api/places/${placeId}/reviews/${reviewId}`,
+        {
+          method: "PUT",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            text: textValue,
+            rating: ratingValue,
+            images: nextImages,
+            userId: user.id,
+            userLogin: user.login,
+          }),
+        }
+      );
+
+      const data = await res.json();
+      if (!data.ok) {
+        throw new Error(data.message || "Не удалось сохранить отзыв");
+      }
+
+      if (data.review) {
+        setReviews((prev) =>
+          prev.map((review) =>
+            review.id === reviewId ? data.review : review
+          )
+        );
+      }
+
+      if (data.stats) {
+        setPlace((prev) =>
+          prev
+            ? {
+                ...prev,
+                rating:
+                  data.stats.average === undefined
+                    ? prev.rating
+                    : data.stats.average,
+                reviews:
+                  data.stats.count === undefined
+                    ? prev.reviews
+                    : data.stats.count,
+              }
+            : prev
+        );
+      }
+
+      cancelReviewEdit();
+    } catch (e) {
+      setEditReviewError(e.message || "Не удалось сохранить отзыв");
+    } finally {
+      setEditReviewSaving(false);
+    }
+  };
+
+  const handleReviewDelete = async (reviewId) => {
+    if (!user) {
+      navigate("/login");
+      return;
+    }
+
+    const ok = window.confirm("Удалить этот отзыв?");
+    if (!ok) return;
+
+    setReviewDeletingId(reviewId);
+    setReviewActionError("");
+
+    try {
+      const res = await fetch(
+        `${API_BASE}/api/places/${placeId}/reviews/${reviewId}`,
+        {
+          method: "DELETE",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            userId: user.id,
+            userLogin: user.login,
+          }),
+        }
+      );
+
+      const data = await res.json();
+      if (!data.ok) {
+        throw new Error(data.message || "Не удалось удалить отзыв");
+      }
+
+      setReviews((prev) => prev.filter((review) => review.id !== reviewId));
+
+      if (data.stats) {
+        setPlace((prev) =>
+          prev
+            ? {
+                ...prev,
+                rating:
+                  data.stats.average === undefined
+                    ? prev.rating
+                    : data.stats.average,
+                reviews:
+                  data.stats.count === undefined
+                    ? prev.reviews
+                    : data.stats.count,
+              }
+            : prev
+        );
+      }
+
+      if (editingReviewId === reviewId) {
+        cancelReviewEdit();
+      }
+    } catch (e) {
+      setReviewActionError(e.message || "Не удалось удалить отзыв");
+    } finally {
+      setReviewDeletingId(null);
+    }
   };
 
   const handleReviewSubmit = async (event) => {
@@ -504,6 +1087,16 @@ export default function PlacePage() {
 
     if (!user) {
       navigate("/login");
+      return;
+    }
+
+    if (!canCreateReview) {
+      setReviewActionError("У вас уже есть отзыв на это место. Вы можете его редактировать.");
+      setSubmitMessage("");
+      if (userOwnReview) {
+        setIsReviewFormOpen(false);
+        startReviewEdit(userOwnReview);
+      }
       return;
     }
 
@@ -524,11 +1117,13 @@ export default function PlacePage() {
     setSubmitMessage("");
 
     try {
+      const uploadedUrls = await uploadReviewImages(reviewImages);
       const payload = {
         userId: user.id,           // ✅ важно
         userLogin: user.login,     // можно оставить как fallback
         text,
         rating: ratingValue,
+        images: uploadedUrls,
       };
 
       const res = await fetch(`${API_BASE}/api/places/${placeId}/reviews`, {
@@ -568,6 +1163,8 @@ export default function PlacePage() {
 
       setReviewText("");
       setReviewRating(5);
+      clearReviewImages();
+      setReviewImageError("");
       setSubmitMessage("Отзыв отправлен");
       setIsReviewFormOpen(true);
     } catch (e) {
@@ -593,9 +1190,67 @@ export default function PlacePage() {
   const isFirstImage = activeIndex === 0;
   const isLastImage =
     !galleryImages.length || activeIndex === galleryImages.length - 1;
+  const placeTitle = place?.name
+  ? `${place.name} — ALLSPACE`
+  : "Место для работы — ALLSPACE";
+
+  const placeDescription =
+    place?.description ||
+    `Подборка информации о месте ${place?.name || ""}: адрес, фото, отзывы, удобства и маршрут.`;
+
+  const rawPlaceImage =
+    galleryImages?.[0] || place?.image || "/og-default.jpg";
+
+  const placeImage = rawPlaceImage
+    ? (rawPlaceImage.startsWith("http")
+        ? rawPlaceImage
+        : rawPlaceImage.startsWith("/photos/")
+        ? `${API_BASE}${rawPlaceImage}`
+        : `${SEO_SITE_URL}${rawPlaceImage}`)
+    : `${SEO_SITE_URL}/og-default.jpg`;
+
+  const placeUrl = `${SEO_SITE_URL}/place/${place?.id || placeId}`;
+
+  const aggregateRatingValue =
+    typeof ratingSource === "number" && !Number.isNaN(ratingSource)
+      ? Number(ratingSource.toFixed(1))
+      : undefined;
 
   return (
     <>
+      <SEO
+        title={placeTitle}
+        description={placeDescription}
+        canonical={placeUrl}
+        ogTitle={placeTitle}
+        ogDescription={placeDescription}
+        ogImage={placeImage}
+        ogUrl={placeUrl}
+        type="place"
+        jsonLd={{
+          "@context": "https://schema.org",
+          "@type": "Place",
+          name: place?.name || "Место",
+          description: placeDescription,
+          image: [placeImage],
+          address: {
+            "@type": "PostalAddress",
+            addressLocality: place?.city || "",
+            streetAddress: place?.address || "",
+            addressCountry: "RU",
+          },
+          url: placeUrl,
+          ...(aggregateRatingValue
+            ? {
+                aggregateRating: {
+                  "@type": "AggregateRating",
+                  ratingValue: aggregateRatingValue,
+                  reviewCount: reviewsCount || 0,
+                },
+              }
+            : {}),
+        }}
+      />
       <section className="place-page">
         <div className="container place-page__inner">
           <div className="place-page__layout">
@@ -695,7 +1350,7 @@ export default function PlacePage() {
                 </div>
 
                 <p className="place-page__description">
-                  {details.description}
+                  {place.description || "Описание места пока не добавлено."}
                 </p>
               </div>
 
@@ -748,11 +1403,13 @@ export default function PlacePage() {
                     className="place-page__reviews-btn"
                     onClick={handleReviewButtonClick}
                   >
-                    {"Оставить отзыв"}
+                    {user && !userIsAdmin && userOwnReview
+                      ? "Редактировать мой отзыв"
+                      : "Оставить отзыв"}
                   </button>
                 </div>
 
-                {isReviewFormOpen && (
+                {isReviewFormOpen && canCreateReview && (
                   <form className="review-form" onSubmit={handleReviewSubmit}>
                     <div className="review-form__row">
                       <span className="review-form__label">{"Ваша оценка:"}</span>
@@ -785,6 +1442,53 @@ export default function PlacePage() {
                       maxLength={1000}
                     />
 
+                    <div className="review-form__uploads">
+                      <div className="review-form__uploads-title">
+                        Фото к отзыву (до {REVIEW_IMAGES_LIMIT})
+                      </div>
+
+                      <div className="review-form__uploads-grid">
+                        {reviewImages.map((img) => (
+                          <div key={img.id} className="review-form__upload-thumb">
+                            <img
+                              src={img.previewUrl}
+                              alt="Фото отзыва"
+                              className="review-form__upload-img"
+                            />
+                            <button
+                              type="button"
+                              className="review-form__upload-remove"
+                              onClick={() => handleReviewImageRemove(img.id)}
+                            >
+                              ×
+                            </button>
+                          </div>
+                        ))}
+
+                        <label
+                          className="review-form__upload"
+                          onDragOver={(e) => e.preventDefault()}
+                          onDrop={handleReviewImageDrop}
+                        >
+                          <input
+                            type="file"
+                            accept="image/*"
+                            multiple
+                            className="review-form__upload-input"
+                            onChange={handleReviewImageInputChange}
+                          />
+                          <div className="review-form__upload-icon">+</div>
+                          <div className="review-form__upload-text">Добавить</div>
+                        </label>
+                      </div>
+
+                      {reviewImageError && (
+                        <div className="review-form__message review-form__message--error">
+                          {reviewImageError}
+                        </div>
+                      )}
+                    </div>
+
                     <div className="review-form__actions">
                       <button
                         type="submit"
@@ -814,6 +1518,12 @@ export default function PlacePage() {
                   </p>
                 )}
 
+                {reviewActionError && !reviewsError && (
+                  <p className="review-form__message review-form__message--error">
+                    {reviewActionError}
+                  </p>
+                )}
+
                 {reviewsLoading ? (
                   <p>Загружаем отзывы...</p>
                 ) : (
@@ -826,6 +1536,10 @@ export default function PlacePage() {
                         Math.min(5, Number(review.rating) || 0)
                       );
                       const reviewDate = formatReviewDate(review.createdAt);
+                      const canEditReview =
+                        user && (user.login === "admin" || isSameUser(review, user));
+                      const canDeleteReview = user && user.login === "admin";
+                      const isEditing = editingReviewId === review.id;
 
                       return (
                         <article key={review.id} className="review-card">
@@ -869,7 +1583,163 @@ export default function PlacePage() {
                             </div>
                           </div>
 
-                          <p className="review-card__text">{review.text}</p>
+                          {isEditing ? (
+                            <div className="review-card__edit">
+                              <div className="review-card__edit-row">
+                                <span className="review-card__edit-label">
+                                  Оценка:
+                                </span>
+                                <div className="review-card__edit-stars">
+                                  {[1, 2, 3, 4, 5].map((value) => (
+                                    <button
+                                      key={value}
+                                      type="button"
+                                      className={
+                                        "review-card__edit-star" +
+                                        (value <= editReviewRating
+                                          ? " review-card__edit-star--active"
+                                          : "")
+                                      }
+                                      onClick={() => {
+                                        setEditReviewRating(value);
+                                        setEditReviewError("");
+                                      }}
+                                    >
+                                      ★
+                                    </button>
+                                  ))}
+                                  <span className="review-card__edit-hint">
+                                    {editReviewRating}/5
+                                  </span>
+                                </div>
+                              </div>
+
+                              <textarea
+                                className="review-card__edit-textarea"
+                                value={editReviewText}
+                                onChange={(e) => {
+                                  setEditReviewText(e.target.value);
+                                  setEditReviewError("");
+                                }}
+                                rows={3}
+                                maxLength={1000}
+                              />
+
+                              <div className="review-form__uploads">
+                                <div className="review-form__uploads-title">
+                                  Фото к отзыву (до {REVIEW_IMAGES_LIMIT})
+                                </div>
+
+                                <div className="review-form__uploads-grid">
+                                  {editReviewImages.map((img) => (
+                                    <div key={img.id} className="review-form__upload-thumb">
+                                      <img
+                                        src={img.isNew ? img.previewUrl : resolveMediaUrl(img.url)}
+                                        alt="Фото отзыва"
+                                        className="review-form__upload-img"
+                                      />
+                                      <button
+                                        type="button"
+                                        className="review-form__upload-remove"
+                                        onClick={() => handleEditReviewImageRemove(img.id)}
+                                        disabled={editReviewSaving}
+                                      >
+                                        ×
+                                      </button>
+                                    </div>
+                                  ))}
+
+                                  {editReviewImages.length < REVIEW_IMAGES_LIMIT && (
+                                    <label
+                                      className="review-form__upload"
+                                      onDragOver={(e) => e.preventDefault()}
+                                      onDrop={handleEditReviewImageDrop}
+                                    >
+                                      <input
+                                        type="file"
+                                        accept="image/*"
+                                        multiple
+                                        className="review-form__upload-input"
+                                        onChange={handleEditReviewImageInputChange}
+                                      />
+                                      <div className="review-form__upload-icon">+</div>
+                                      <div className="review-form__upload-text">Добавить</div>
+                                    </label>
+                                  )}
+                                </div>
+                              </div>
+
+                              {editReviewImageError && (
+                                <div className="review-card__edit-message review-card__edit-message--error">
+                                  {editReviewImageError}
+                                </div>
+                              )}
+
+                              {editReviewError && (
+                                <div className="review-card__edit-message review-card__edit-message--error">
+                                  {editReviewError}
+                                </div>
+                              )}
+
+                              <div className="review-card__edit-actions">
+                                <button
+                                  type="button"
+                                  className="review-card__edit-btn"
+                                  onClick={() => handleReviewUpdate(review.id)}
+                                  disabled={editReviewSaving}
+                                >
+                                  {editReviewSaving ? "Сохраняем..." : "Сохранить"}
+                                </button>
+                                <button
+                                  type="button"
+                                  className="review-card__edit-btn review-card__edit-btn--ghost"
+                                  onClick={cancelReviewEdit}
+                                  disabled={editReviewSaving}
+                                >
+                                  Отмена
+                                </button>
+                              </div>
+                            </div>
+                          ) : (
+                            <p className="review-card__text">{review.text}</p>
+                          )}
+
+                          {!isEditing && Array.isArray(review.images) && review.images.length > 0 && (
+                            <div className="review-card__images">
+                              {review.images.map((img, index) => (
+                                <img
+                                  key={`${review.id}-img-${index}`}
+                                  src={resolveMediaUrl(img)}
+                                  alt={`Фото отзыва ${index + 1}`}
+                                  className="review-card__image"
+                                />
+                              ))}
+                            </div>
+                          )}
+
+                          {canEditReview && !isEditing && (
+                            <div className="review-card__actions">
+                              <button
+                                type="button"
+                                className="review-card__action-btn"
+                                onClick={() => startReviewEdit(review)}
+                              >
+                                Редактировать
+                              </button>
+                              {canDeleteReview && (
+                                <button
+                                  type="button"
+                                  className="review-card__action-btn review-card__action-btn--danger"
+                                  onClick={() => handleReviewDelete(review.id)}
+                                  disabled={reviewDeletingId === review.id}
+                                >
+                                  {reviewDeletingId === review.id
+                                    ? "Удаляем..."
+                                    : "Удалить"}
+                                </button>
+                              )}
+                            </div>
+                          )}
                         </article>
                       );
                     })}
@@ -953,9 +1823,15 @@ export default function PlacePage() {
                 </p>
 
                 <div className="place-sidecard__map">
-                  {mapSrc ? (
+                  {placeCoordinates ? (
+                    <div
+                      ref={placeMapRef}
+                      className="place-sidecard__map-canvas"
+                      aria-label={`Карта: ${place.name}`}
+                    />
+                  ) : mapWidgetUrl ? (
                     <iframe
-                      src={mapSrc}
+                      src={mapWidgetUrl}
                       title={`Карта: ${place.name}`}
                       className="place-sidecard__map-iframe"
                       allowFullScreen
@@ -1055,4 +1931,3 @@ export default function PlacePage() {
     </>
   );
 }
-

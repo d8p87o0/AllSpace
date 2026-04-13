@@ -11,6 +11,15 @@ const csvPath = path.resolve(__dirname, "city.csv");
 
 let cities = [];
 
+function normalizeCityName(value = "") {
+  return String(value)
+    .trim()
+    .toLowerCase()
+    .replace(/\u00a0/g, " ")
+    .replace(/\s+/g, " ")
+    .replace(/ё/g, "е");
+}
+
 function loadCities() {
   try {
     const csv = fs.readFileSync(csvPath, "utf8");
@@ -66,7 +75,7 @@ function loadCities() {
 
       if (!name) continue;
 
-      const key = name.toLowerCase();
+      const key = normalizeCityName(name);
       if (seen.has(key)) continue;
       seen.add(key);
 
@@ -91,7 +100,7 @@ loadCities();
  */
 export function suggestCities(query, limit = 10) {
   if (!query) return [];
-  const q = query.trim().toLowerCase();
+  const q = normalizeCityName(query);
   if (!q) return [];
 
   return cities
@@ -105,6 +114,6 @@ export function suggestCities(query, limit = 10) {
  */
 export function cityExists(name) {
   if (!name) return false;
-  const n = name.trim().toLowerCase();
+  const n = normalizeCityName(name);
   return cities.some((c) => c.lower === n);
 }
